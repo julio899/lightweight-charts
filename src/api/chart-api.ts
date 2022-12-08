@@ -1,4 +1,9 @@
-import { ChartWidget, MouseEventParamsImpl, MouseEventParamsImplSupplier } from '../gui/chart-widget';
+import {
+	ChartWidget,
+	CustomPriceLineDraggedEventParamsImpl, CustomPriceLineDraggedEventParamsImplSupplier,
+	MouseEventParamsImpl,
+	MouseEventParamsImplSupplier,
+} from '../gui/chart-widget';
 
 import { assert, ensureDefined } from '../helpers/assertions';
 import { Delegate } from '../helpers/delegate';
@@ -28,7 +33,13 @@ import { Logical, Time } from '../model/time-data';
 import { DataUpdatesConsumer, isFulfilledData, SeriesDataItemTypeMap } from './data-consumer';
 import { DataLayer, DataUpdateResponse, SeriesChanges } from './data-layer';
 import { getSeriesDataCreator } from './get-series-data-creator';
-import { IChartApi, MouseEventHandler, MouseEventParams } from './ichart-api';
+import {
+	CustomPriceLineDraggedEventHandler,
+	CustomPriceLineDraggedEventParams,
+	IChartApi,
+	MouseEventHandler,
+	MouseEventParams,
+} from './ichart-api';
 import { IPriceScaleApi } from './iprice-scale-api';
 import { ISeriesApi } from './iseries-api';
 import { ITimeScaleApi } from './itime-scale-api';
@@ -114,6 +125,7 @@ export class ChartApi implements IChartApi, DataUpdatesConsumer<SeriesType> {
 
 	private readonly _clickedDelegate: Delegate<MouseEventParams> = new Delegate();
 	private readonly _crosshairMovedDelegate: Delegate<MouseEventParams> = new Delegate();
+	private readonly _customPriceLineDraggedDelegate: Delegate<CustomPriceLineDraggedEventParams> = new Delegate();
 
 	private readonly _timeScaleApi: TimeScaleApi;
 
@@ -136,6 +148,14 @@ export class ChartApi implements IChartApi, DataUpdatesConsumer<SeriesType> {
 			(paramSupplier: MouseEventParamsImplSupplier) => {
 				if (this._crosshairMovedDelegate.hasListeners()) {
 					this._crosshairMovedDelegate.fire(this._convertMouseParams(paramSupplier()));
+				}
+			},
+			this
+		);
+		this._chartWidget.customPriceLineDragged().subscribe(
+			(paramSupplier: CustomPriceLineDraggedEventParamsImplSupplier) => {
+				if (this._customPriceLineDraggedDelegate.hasListeners()) {
+					this._customPriceLineDraggedDelegate.fire(this._convertCustomPriceLineDraggedParams(paramSupplier()));
 				}
 			},
 			this
@@ -227,6 +247,14 @@ export class ChartApi implements IChartApi, DataUpdatesConsumer<SeriesType> {
 		this._crosshairMovedDelegate.unsubscribe(handler);
 	}
 
+	public subscribeCustomPriceLineDragged(handler: CustomPriceLineDraggedEventHandler): void {
+		this._customPriceLineDraggedDelegate.subscribe(handler);
+	}
+
+	public unsubscribeCustomPriceLineDragged(handler: CustomPriceLineDraggedEventHandler): void {
+		this._customPriceLineDraggedDelegate.unsubscribe(handler);
+	}
+
 	public priceScale(priceScaleId: string): IPriceScaleApi {
 		return new PriceScaleApi(this._chartWidget, priceScaleId);
 	}
@@ -245,6 +273,13 @@ export class ChartApi implements IChartApi, DataUpdatesConsumer<SeriesType> {
 
 	public takeScreenshot(): HTMLCanvasElement {
 		return this._chartWidget.takeScreenshot();
+	}
+
+	private _convertCustomPriceLineDraggedParams(param: CustomPriceLineDraggedEventParamsImpl): CustomPriceLineDraggedEventParams {
+		return {
+			customPriceLine: param.customPriceLine,
+			fromPriceString: param.fromPriceString,
+		};
 	}
 
 	private _addSeriesImpl<TSeries extends SeriesType>(

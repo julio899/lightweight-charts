@@ -1,6 +1,7 @@
 import { DeepPartial } from '../helpers/strict-type-checks';
 
 import { ChartOptions } from '../model/chart-model';
+import { CustomPriceLine } from '../model/custom-price-line';
 import { Point } from '../model/point';
 import {
 	AreaSeriesPartialOptions,
@@ -18,6 +19,13 @@ import { BarData, HistogramData, LineData } from './data-consumer';
 import { IPriceScaleApi } from './iprice-scale-api';
 import { ISeriesApi } from './iseries-api';
 import { ITimeScaleApi } from './itime-scale-api';
+
+export interface CustomPriceLineDraggedEventParams {
+	customPriceLine: CustomPriceLine;
+	fromPriceString: string;
+}
+
+export type CustomPriceLineDraggedEventHandler = (param: CustomPriceLineDraggedEventParams) => void;
 
 /**
  * Represents a mouse event.
@@ -224,6 +232,20 @@ export interface IChartApi {
 	 * ```
 	 */
 	unsubscribeCrosshairMove(handler: MouseEventHandler): void;
+
+	/**
+	 * Adds a subscription to receive notifications on custom price lines being dragged
+	 *
+	 * @param handler - handler (function) to be called on dragged
+	 */
+	subscribeCustomPriceLineDragged(handler: CustomPriceLineDraggedEventHandler): void;
+
+	/**
+	 * Removes custom price line dragged subscription
+	 *
+	 * @param handler - previously subscribed handler
+	 */
+	unsubscribeCustomPriceLineDragged(handler: CustomPriceLineDraggedEventHandler): void;
 
 	/**
 	 * Returns API to manipulate a price scale.
