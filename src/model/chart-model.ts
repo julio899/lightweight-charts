@@ -12,6 +12,7 @@ import { PriceAxisRendererOptionsProvider } from '../renderers/price-axis-render
 
 import { Coordinate } from './coordinate';
 import { Crosshair, CrosshairOptions } from './crosshair';
+import { CustomPriceLine } from './custom-price-line';
 import { DefaultPriceScaleId, isDefaultPriceScale } from './default-price-scale';
 import { GridOptions } from './grid';
 import { InvalidateMask, InvalidationLevel, ITimeScaleAnimation } from './invalidate-mask';
@@ -370,7 +371,10 @@ export class ChartModel implements IDestroyable {
 	private _width: number = 0;
 	private _hoveredSource: HoveredSource | null = null;
 	private readonly _priceScalesOptionsChanged: Delegate = new Delegate();
-	private _crosshairMoved: Delegate<TimePointIndex | null, Point | null, TouchMouseEventData | null> = new Delegate();
+	// # oem private _crosshairMoved: Delegate<TimePointIndex | null, Point | null, TouchMouseEventData | null> = new Delegate();
+
+	private _crosshairMoved: Delegate<TimePointIndex | null, TouchMouseEventData | null> = new Delegate();
+	private _customPriceLineDragged: Delegate<CustomPriceLine, string> = new Delegate();
 
 	private _backgroundTopColor: string;
 	private _backgroundBottomColor: string;
@@ -392,6 +396,10 @@ export class ChartModel implements IDestroyable {
 
 		this._backgroundTopColor = this._getBackgroundColor(BackgroundColorSide.Top);
 		this._backgroundBottomColor = this._getBackgroundColor(BackgroundColorSide.Bottom);
+	}
+
+	public customPriceLineDragged(): ISubscription<CustomPriceLine, string> {
+		return this._customPriceLineDragged;
 	}
 
 	public fullUpdate(): void {
@@ -516,6 +524,10 @@ export class ChartModel implements IDestroyable {
 	public setPaneHeight(pane: Pane, height: number): void {
 		pane.setHeight(height);
 		this.recalculateAllPanes();
+	}
+
+	public fireCustomPriceLineDragged(customPriceLine: CustomPriceLine, fromPriceString: string): void {
+		this._customPriceLineDragged.fire(customPriceLine, fromPriceString);
 	}
 
 	public setWidth(width: number): void {

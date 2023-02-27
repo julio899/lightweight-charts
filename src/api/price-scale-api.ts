@@ -25,6 +25,10 @@ export class PriceScaleApi implements IPriceScaleApi {
 		return this._priceScale().options();
 	}
 
+	public formatPrice(price: number, firstValue: number = 0): string {
+		return this._priceScale().formatPrice(price, firstValue);
+	}
+
 	public width(): number {
 		if (!isDefaultPriceScale(this._priceScaleId)) {
 			return 0;
