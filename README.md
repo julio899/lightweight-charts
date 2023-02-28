@@ -1,21 +1,48 @@
-# Lightweight Charts
+# About this fork
 
-[![Build Status](https://travis-ci.com/tradingview/lightweight-charts.svg?branch=master)](https://travis-ci.com/tradingview/lightweight-charts)
-[![npm version](https://badge.fury.io/js/lightweight-charts.svg)](https://www.npmjs.com/package/lightweight-charts)
-![npm bundle size](https://badgen.net/bundlephobia/minzip/lightweight-charts)
-![Zero dependencies](https://badgen.net/badge/dependencies/0/green)
-[![Downloads](https://img.shields.io/npm/dm/lightweight-charts.svg)](https://www.npmjs.com/package/lightweight-charts)
+This is a fork of TradingView's [Lightweight Charts](https://github.com/tradingview/lightweight-charts).
+I needed certain features that weren't included yet (and maybe never) in the official version of LWC.
+Specifically, I have an application that is very much like TradingView.com where each window can contain multiple charts, and each chart can have multiple indicator panes.
 
-TradingView Lightweight Charts is one of the smallest and fastest financial HTML5 charts.
+[John Wallace](https://github.com/john-wallace-dev)
+March 2022
+
+## Multiple Panes
+
+Allows multiple panes below the main chart. I use them to display interactive indicators below the main chart. Implemented by [ntf](https://github.com/ntf) to satisfy requests from [Lightweight Charts issue 50](https://github.com/tradingview/lightweight-charts/issues/50).
+
+## Setting Crosshair Position
+
+Allows you to programmatically set the crosshair, which is useful when you want to synchronize the crosshair between multiple charts on one screen. Implemented by [trior](https://github.com/triorr) to satisfy requests from [Lightweight Charts issue 438](https://github.com/tradingview/lightweight-charts/issues/438).
+
+## From Main Branch
+
+<!-- markdownlint-disable no-inline-html first-line-h1 -->
+
+<div align="center">
+  <a href="https://www.tradingview.com/lightweight-charts/" target="_blank">
+    <img width="200" src="https://github.com/tradingview/lightweight-charts/raw/master/.github/logo.svg?sanitize=true">
+  </a>
+
+  <h1>Lightweight Charts</h1>
+
+  [![CircleCI][ci-img]][ci-link]
+  [![npm version][npm-version-img]][npm-link]
+  [![npm bundle size][bundle-size-img]][bundle-size-link]
+  [![Dependencies count][deps-count-img]][bundle-size-link]
+  [![Downloads][npm-downloads-img]][npm-link]
+</div>
+
+<!-- markdownlint-enable no-inline-html -->
+
+[Demos][demo-url] | [Documentation](https://tradingview.github.io/lightweight-charts/) | [Discord community](https://discord.gg/UC7cGkvn4U) | [Reddit](https://www.reddit.com/r/TradingView/)
+
+TradingView Lightweight Charts are one of the smallest and fastest financial HTML5 charts.
 
 The Lightweight Charting Library is the best choice for you if you want to display financial data as an interactive chart on your web page without affecting your web page loading speed and performance.
 
 It is the best choice for you if you want to replace static image charts with interactive ones.
 The size of the library is close to static images but if you have dozens of image charts on a web page then using this library can make the size of your web page smaller.
-
-## Documentation
-
-Getting started guide and documentation you can find in [docs](./docs) folder.
 
 ## Installing
 
@@ -71,29 +98,7 @@ lineSeries.setData([
 
 ## Development
 
-### Compiling
-
-- `npm run tsc` - compiles the source code only (excluding tests)
-- `npm run tsc-watch` - runs the TypeScript compiler in the watch mode for source code (same as `tsc`, but in the watch mode)
-- `npm run tsc-all` - compiles everything (source code and tests)
-- `npm run tsc-all-watch` - runs the TypeScript compiler in watch mode for source code and tests (same as `tsc-all`, but in watch mode)
-
-### Bundling
-
-- `npm run rollup` - runs Rollup to bundle code
-- `npm run build` - compiles source code and bundles it (as one word for `npm run tsc && npm run rollup`)
-
-Note that only the dev version is bundled by default.
-To bundle production builds (minified) too just set the `NODE_ENV` variable to `production` and run bundling, e.g. `NODE_ENV=production npm run rollup`.
-
-### Testing
-
-- `npm run lint` - runs lint for the code
-- `npm run test` - runs unit-tests
-
-### Tips
-
-To make sure that your local copy passed all (almost) checks, you can use the `verify` npm script: `npm run verify`.
+See [BUILDING.md](./BUILDING.md) for instructions on how to build `lightweight-charts` from source.
 
 ## License
 
@@ -101,9 +106,21 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 You may obtain a copy of the License at LICENSE file.
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 
-This software incorporates several parts of tslib (<https://github.com/Microsoft/tslib>, (c) Microsoft Corporation) that are covered by the the Apache License, Version 2.0.
+This software incorporates several parts of tslib (<https://github.com/Microsoft/tslib>, (c) Microsoft Corporation) that are covered by BSD Zero Clause License.
 
-This license requires specifying TradingView as the product creator. You can use one of the following methods to do it:
+This license requires specifying TradingView as the product creator.
+You shall add the "attribution notice" from the NOTICE file and a link to <https://www.tradingview.com/> to the page of your website or mobile application that is available to your users.
+As thanks for creating this product, we'd be grateful if you add it in a prominent place.
 
-- do not disable the TradingView branding displaying;
-- add the "attribution notice" from the NOTICE file and a link to our website (<https://www.tradingview.com/>) to the page of your website or mobile application that is available to your users;
+[demo-url]: https://www.tradingview.com/lightweight-charts/
+
+[ci-img]: https://img.shields.io/circleci/build/github/tradingview/lightweight-charts.svg
+[ci-link]: https://circleci.com/gh/tradingview/lightweight-charts
+
+[npm-version-img]: https://badge.fury.io/js/lightweight-charts.svg
+[npm-downloads-img]: https://img.shields.io/npm/dm/lightweight-charts.svg
+[npm-link]: https://www.npmjs.com/package/lightweight-charts
+
+[bundle-size-img]: https://badgen.net/bundlephobia/minzip/lightweight-charts
+[deps-count-img]: https://img.shields.io/badge/dynamic/json.svg?label=dependecies&color=brightgreen&query=$.dependencyCount&uri=https%3A%2F%2Fbundlephobia.com%2Fapi%2Fsize%3Fpackage%3Dlightweight-charts
+[bundle-size-link]: https://bundlephobia.com/result?p=lightweight-charts

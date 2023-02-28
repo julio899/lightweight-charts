@@ -1,51 +1,103 @@
+import { Binding as CanvasCoordinateSpaceBinding } from 'fancy-canvas/coordinate-space';
+
 import { ensureNotNull } from '../helpers/assertions';
-import { getContext2d } from '../helpers/canvas-wrapper';
-import { colorWithTransparency } from '../helpers/color';
+import { clearRect, clearRectWithGradient, drawScaled } from '../helpers/canvas-helpers';
 import { Delegate } from '../helpers/delegate';
 import { IDestroyable } from '../helpers/idestroyable';
 import { ISubscription } from '../helpers/isubscription';
-import { defaultFontFamily } from '../helpers/make-font';
 
+import { ChartModel, HoveredObject, TrackingModeExitMode } from '../model/chart-model';
 import { Coordinate } from '../model/coordinate';
 import { IDataSource } from '../model/idata-source';
 import { InvalidationLevel } from '../model/invalidate-mask';
-import { Pane } from '../model/pane';
+import { IPriceDataSource } from '../model/iprice-data-source';
+import { KineticAnimation } from '../model/kinetic-animation';
+import { Pane, PaneInfo } from '../model/pane';
 import { Point } from '../model/point';
-import { PriceAxisPosition } from '../model/price-scale';
 import { TimePointIndex } from '../model/time-data';
+import { IPaneRenderer } from '../renderers/ipane-renderer';
 import { IPaneView } from '../views/pane/ipane-view';
 
-import { addCanvasTo, clearRect, resizeCanvas, Size } from './canvas-utils';
+import { createBoundCanvas, getContext2D, Size } from './canvas-utils';
 import { ChartWidget } from './chart-widget';
-import { MouseEventHandler, Position, TouchMouseEvent } from './mouse-event-handler';
-import { PriceAxisWidget } from './price-axis-widget';
-import { mobileTouch } from './support-touch';
+import { MouseEventHandler, MouseEventHandlerEventBase, MouseEventHandlerMouseEvent, MouseEventHandlers, MouseEventHandlerTouchEvent, Position, TouchMouseEvent } from './mouse-event-handler';
+import { PriceAxisWidget, PriceAxisWidgetSide } from './price-axis-widget';
+
+const enum KineticScrollConstants {
+	MinScrollSpeed = 0.2,
+	MaxScrollSpeed = 7,
+	DumpingCoeff = 0.997,
+	ScrollMinMove = 15,
+}
+
+type DrawFunction = (renderer: IPaneRenderer, ctx: CanvasRenderingContext2D, pixelRatio: number, isHovered: boolean, hitTestData?: unknown) => void;
+
+function drawBackground(renderer: IPaneRenderer, ctx: CanvasRenderingContext2D, pixelRatio: number, isHovered: boolean, hitTestData?: unknown): void {
+	if (renderer.drawBackground) {
+		renderer.drawBackground(ctx, pixelRatio, isHovered, hitTestData);
+	}
+}
+
+function drawForeground(renderer: IPaneRenderer, ctx: CanvasRenderingContext2D, pixelRatio: number, isHovered: boolean, hitTestData?: unknown): void {
+	renderer.draw(ctx, pixelRatio, isHovered, hitTestData);
+}
+
+type PaneViewsGetter = (source: IDataSource, pane: Pane) => readonly IPaneView[];
+
+function sourcePaneViews(source: IDataSource, pane: Pane): readonly IPaneView[] {
+	return source.paneViews(pane);
+}
+
+function sourceLabelPaneViews(source: IDataSource, pane: Pane): readonly IPaneView[] {
+	return source.labelPaneViews(pane);
+}
+
+function sourceTopPaneViews(source: IDataSource, pane: Pane): readonly IPaneView[] {
+	return source.topPaneViews !== undefined ? source.topPaneViews(pane) : [];
+}
 
 export interface HitTestResult {
-	source: IDataSource;
+	source: IPriceDataSource;
+	object?: HoveredObject;
 	view: IPaneView;
 }
 
-export class PaneWidget implements IDestroyable {
+interface HitTestPaneViewResult {
+	view: IPaneView;
+	object?: HoveredObject;
+}
+
+interface StartScrollPosition extends Point {
+	timestamp: number;
+	localX: Coordinate;
+	localY: Coordinate;
+}
+
+export class PaneWidget implements IDestroyable, MouseEventHandlers {
 	private readonly _chart: ChartWidget;
 	private _state: Pane | null;
 	private _size: Size = new Size(0, 0);
-	private _priceAxisWidget: PriceAxisWidget | null = null;
+	private _leftPriceAxisWidget: PriceAxisWidget | null = null;
+	private _rightPriceAxisWidget: PriceAxisWidget | null = null;
 	private readonly _paneCell: HTMLElement;
 	private readonly _leftAxisCell: HTMLElement;
 	private readonly _rightAxisCell: HTMLElement;
-	private readonly _canvas: HTMLCanvasElement;
-	private _ctx: CanvasRenderingContext2D;
-	private readonly _topCanvas: HTMLCanvasElement;
-	private readonly _topCtx: CanvasRenderingContext2D;
+	private readonly _canvasBinding: CanvasCoordinateSpaceBinding;
+	private readonly _topCanvasBinding: CanvasCoordinateSpaceBinding;
 	private readonly _rowElement: HTMLElement;
 	private readonly _mouseEventHandler: MouseEventHandler;
-	private _startScrollingPos: Point | null = null;
+	private _startScrollingPos: StartScrollPosition | null = null;
 	private _isScrolling: boolean = false;
-	private _priceAxisPosition: PriceAxisPosition = 'none';
-	private _clicked: Delegate<TimePointIndex | null, Point> = new Delegate();
+	private _clicked: Delegate<TimePointIndex | null, Point & PaneInfo> = new Delegate();
 	private _prevPinchScale: number = 0;
-	private _brandingElement: HTMLAnchorElement | null = null;
+	private _longTap: boolean = false;
+	private _startTrackPoint: Point | null = null;
+	private _exitTrackingModeOnNextTry: boolean = false;
+	private _initCrosshairPosition: Point | null = null;
+
+	private _scrollXAnimation: KineticAnimation | null = null;
+
+	private _isSettingSize: boolean = false;
 
 	public constructor(chart: ChartWidget, state: Pane) {
 		this._chart = chart;
@@ -70,40 +122,52 @@ export class PaneWidget implements IDestroyable {
 		this._rightAxisCell.style.padding = '0';
 
 		this._paneCell.appendChild(paneWrapper);
-		this._createLogoElement();
-		this.updateBranding();
 
-		this._canvas = addCanvasTo(paneWrapper, new Size(16, 16));
-		this._canvas.style.position = 'absolute';
-		this._canvas.style.zIndex = '1';
-		this._canvas.style.left = '0';
-		this._canvas.style.top = '0';
+		this._canvasBinding = createBoundCanvas(paneWrapper, new Size(16, 16));
+		this._canvasBinding.subscribeCanvasConfigured(this._canvasConfiguredHandler);
+		const canvas = this._canvasBinding.canvas;
+		canvas.style.position = 'absolute';
+		canvas.style.zIndex = '1';
+		canvas.style.left = '0';
+		canvas.style.top = '0';
 
-		this._ctx = ensureNotNull(getContext2d(this._canvas));
-
-		this._topCanvas = addCanvasTo(paneWrapper, new Size(16, 16));
-		this._topCanvas.style.position = 'absolute';
-		this._topCanvas.style.zIndex = '2';
-		this._topCanvas.style.left = '0';
-		this._topCanvas.style.top = '0';
-
-		this._topCtx = ensureNotNull(getContext2d(this._topCanvas));
+		this._topCanvasBinding = createBoundCanvas(paneWrapper, new Size(16, 16));
+		this._topCanvasBinding.subscribeCanvasConfigured(this._topCanvasConfiguredHandler);
+		const topCanvas = this._topCanvasBinding.canvas;
+		topCanvas.style.position = 'absolute';
+		topCanvas.style.zIndex = '2';
+		topCanvas.style.left = '0';
+		topCanvas.style.top = '0';
 
 		this._rowElement = document.createElement('tr');
 		this._rowElement.appendChild(this._leftAxisCell);
 		this._rowElement.appendChild(this._paneCell);
 		this._rowElement.appendChild(this._rightAxisCell);
-		this._recreatePriceAxisWidgetImpl();
-		chart.model().mainPriceScaleOptionsChanged().subscribe(this._recreatePriceAxisWidget.bind(this), this);
-		this.updatePriceAxisWidget();
+		this.updatePriceAxisWidgetsStates();
 
-		this._mouseEventHandler = new MouseEventHandler(this._topCanvas, this, true, this.chart().options().handleScroll.pressedMouseMove);
+		this._mouseEventHandler = new MouseEventHandler(
+			this._topCanvasBinding.canvas,
+			this,
+			{
+				treatVertTouchDragAsPageScroll: () => this._startTrackPoint === null && !this._chart.options().handleScroll.vertTouchDrag,
+				treatHorzTouchDragAsPageScroll: () => this._startTrackPoint === null && !this._chart.options().handleScroll.horzTouchDrag,
+			}
+		);
 	}
 
 	public destroy(): void {
-		if (this._priceAxisWidget !== null) {
-			this._priceAxisWidget.destroy();
+		if (this._leftPriceAxisWidget !== null) {
+			this._leftPriceAxisWidget.destroy();
 		}
+		if (this._rightPriceAxisWidget !== null) {
+			this._rightPriceAxisWidget.destroy();
+		}
+
+		this._topCanvasBinding.unsubscribeCanvasConfigured(this._topCanvasConfiguredHandler);
+		this._topCanvasBinding.destroy();
+
+		this._canvasBinding.unsubscribeCanvasConfigured(this._canvasConfiguredHandler);
+		this._canvasBinding.destroy();
 
 		if (this._state !== null) {
 			this._state.onDestroyed().unsubscribeAll(this);
@@ -114,10 +178,6 @@ export class PaneWidget implements IDestroyable {
 
 	public state(): Pane {
 		return ensureNotNull(this._state);
-	}
-
-	public stateOrNull(): Pane | null {
-		return this._state;
 	}
 
 	public setState(pane: Pane | null): void {
@@ -131,7 +191,7 @@ export class PaneWidget implements IDestroyable {
 			this._state.onDestroyed().subscribe(PaneWidget.prototype._onStateDestroyed.bind(this), this, true);
 		}
 
-		this.updatePriceAxisWidget();
+		this.updatePriceAxisWidgetsStates();
 	}
 
 	public chart(): ChartWidget {
@@ -142,18 +202,33 @@ export class PaneWidget implements IDestroyable {
 		return this._rowElement;
 	}
 
-	public updatePriceAxisWidget(): void {
-		if (this._state === null || this._priceAxisWidget === null) {
+	public updatePriceAxisWidgetsStates(): void {
+		if (this._state === null) {
 			return;
 		}
 
-		const model = this._chart.model();
-		if (model.serieses().length === 0) {
+		this._recreatePriceAxisWidgets();
+		if (this._model().serieses().length === 0) {
 			return;
 		}
 
-		const priceScale = this._state.defaultPriceScale();
-		this._priceAxisWidget.setPriceScale(ensureNotNull(priceScale));
+		if (this._leftPriceAxisWidget !== null) {
+			const leftPriceScale = this._state.leftPriceScale();
+			this._leftPriceAxisWidget.setPriceScale(ensureNotNull(leftPriceScale));
+		}
+		if (this._rightPriceAxisWidget !== null) {
+			const rightPriceScale = this._state.rightPriceScale();
+			this._rightPriceAxisWidget.setPriceScale(ensureNotNull(rightPriceScale));
+		}
+	}
+
+	public updatePriceAxisWidgets(): void {
+		if (this._leftPriceAxisWidget !== null) {
+			this._leftPriceAxisWidget.update();
+		}
+		if (this._rightPriceAxisWidget !== null) {
+			this._rightPriceAxisWidget.update();
+		}
 	}
 
 	public stretchFactor(): number {
@@ -166,189 +241,88 @@ export class PaneWidget implements IDestroyable {
 		}
 	}
 
-	public mouseEnterEvent(event: TouchMouseEvent): void {
+	public mouseEnterEvent(event: MouseEventHandlerMouseEvent): void {
 		if (!this._state) {
 			return;
 		}
+		this._onMouseEvent();
 
-		const model = this._chart.model();
+		const x = event.localX;
+		const y = event.localY;
 
-		const x = event.localX as Coordinate;
-		const y = event.localY as Coordinate;
-
-		if (!mobileTouch) {
-			model.setAndSaveCurrentPosition(x, y, this._state);
-		}
+		this._setCrosshairPosition(x, y);
 	}
 
-	public mouseDownEvent(event: TouchMouseEvent): void {
+	public mouseDownEvent(event: MouseEventHandlerMouseEvent): void {
+		this._onMouseEvent();
+		this._mouseTouchDownEvent();
+		this._setCrosshairPosition(event.localX, event.localY);
+	}
+
+	public mouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
 		if (!this._state) {
 			return;
 		}
+		this._onMouseEvent();
 
-		if (document.activeElement !== document.body && document.activeElement !== document.documentElement) {
-			// If any focusable element except the page itself is focused, remove the focus
-			(ensureNotNull(document.activeElement) as HTMLElement).blur();
-		} else {
-			// Clear selection
-			const selection = document.getSelection();
-			if (selection !== null) {
-				selection.removeAllRanges();
-			}
-		}
+		const x = event.localX;
+		const y = event.localY;
 
-		const model = this._chart.model();
-
-		const priceScale = this._state.defaultPriceScale();
-
-		if (priceScale.isEmpty() || model.timeScale().isEmpty()) {
-			return;
-		}
-
-		if (!mobileTouch) {
-			model.setAndSaveCurrentPosition(event.localX as Coordinate, event.localY as Coordinate, this._state);
-		}
-	}
-
-	public mouseMoveEvent(event: TouchMouseEvent): void {
-		if (!this._state) {
-			return;
-		}
-
-		const model = this._chart.model();
-
-		const x = event.localX as Coordinate;
-		const y = event.localY as Coordinate;
-
-		if (!mobileTouch) {
-			model.setAndSaveCurrentPosition(x, y, this._state);
-			const hitTest = this.hitTest(x, y);
-			this._state.model().setHoveredSource(hitTest && hitTest.source);
-			if (hitTest !== null && hitTest.view.moveHandler !== undefined) {
-				hitTest.view.moveHandler(x, y);
-			}
-		}
-	}
-
-	public mouseClickEvent(event: TouchMouseEvent): void {
-		if (this._state === null) {
-			return;
-		}
-
-		const x = event.localX as Coordinate;
-		const y = event.localY as Coordinate;
+		this._setCrosshairPosition(x, y);
 		const hitTest = this.hitTest(x, y);
-		if (hitTest !== null && hitTest.view.clickHandler !== undefined) {
-			hitTest.view.clickHandler(x, y);
-		}
-
-		if (this._clicked.hasListeners()) {
-			const model = this._chart.model();
-			const currentTime = model.crossHairSource().appliedIndex();
-			this._clicked.fire(currentTime, { x, y });
-		}
+		this._model().setHoveredSource(hitTest && { source: hitTest.source, object: hitTest.object });
 	}
 
-	public pressedMouseMoveEvent(event: TouchMouseEvent): void {
+	public mouseClickEvent(event: MouseEventHandlerMouseEvent): void {
 		if (this._state === null) {
 			return;
 		}
+		this._onMouseEvent();
 
-		const model = this._chart.model();
-		const x = event.localX as Coordinate;
-		const y = event.localY as Coordinate;
-
-		model.setAndSaveCurrentPosition(x, y, this._state);
-
-		if (model.timeScale().isEmpty() || !this._chart.options().handleScroll.pressedMouseMove) {
-			return;
-		}
-
-		const priceScale = this._state.defaultPriceScale();
-
-		if (this._startScrollingPos === null) {
-			this._startScrollingPos = {
-				x: event.clientX as Coordinate,
-				y: event.clientY as Coordinate,
-			};
-		}
-
-		if (this._startScrollingPos.x !== event.clientX || this._startScrollingPos.y !== event.clientY) {
-			if (!this._isScrolling) {
-				if (!priceScale.isEmpty()) {
-					model.startScrollPrice(this._state, priceScale, event.localY as Coordinate);
-				}
-
-				model.startScrollTime(event.localX as Coordinate);
-				this._isScrolling = true;
-			}
-		}
-
-		if (this._isScrolling) {
-			// this allows scrolling not default price scales
-			if (!priceScale.isEmpty()) {
-				model.scrollPriceTo(this._state, priceScale, event.localY as Coordinate);
-			}
-
-			model.scrollTimeTo(event.localX as Coordinate);
-		}
+		this._fireClickedDelegate(event);
 	}
 
-	public mouseUpEvent(event: TouchMouseEvent): void {
+	public pressedMouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
+		this._onMouseEvent();
+		this._pressedMouseTouchMoveEvent(event);
+		this._setCrosshairPosition(event.localX, event.localY);
+	}
+
+	public mouseUpEvent(event: MouseEventHandlerMouseEvent): void {
 		if (this._state === null) {
 			return;
 		}
+		this._onMouseEvent();
 
-		const model = this._chart.model();
+		this._longTap = false;
 
-		if (this._isScrolling) {
-			const priceScale = this._state.defaultPriceScale();
-			// this allows scrolling not default price scales
-
-			model.endScrollPrice(this._state, priceScale);
-			const finishScroll = () => {
-				model.endScrollTime();
-				this._startScrollingPos = null;
-				this._isScrolling = false;
-			};
-
-			if (mobileTouch) {
-				// animate
-				const startTimeScroll = ensureNotNull(model.timeScale().scrollStartPoint());
-				const tail = (event.localX - startTimeScroll) * 0.05;
-				let start: number | null = null;
-				const animateStep = (timestamp: number) => {
-					if (start === null) {
-						start = timestamp;
-					}
-
-					let progress = Math.min(100, (timestamp - start) * 3) * 0.01;
-					progress = Math.sqrt(progress);
-
-					// make it non-linear
-					const x = event.localX + tail * progress as Coordinate;
-					model.scrollTimeTo(x);
-					if (progress >= 1) {
-						finishScroll();
-					} else {
-						requestAnimationFrame(animateStep);
-					}
-				};
-
-				requestAnimationFrame(animateStep);
-			} else {
-				finishScroll();
-			}
-		}
+		this._endScroll(event);
 	}
 
-	public mouseLeaveEvent(event: TouchMouseEvent): void {
+	public tapEvent(event: MouseEventHandlerTouchEvent): void {
 		if (this._state === null) {
 			return;
 		}
+		this._fireClickedDelegate(event);
+	}
+
+	public longTapEvent(event: MouseEventHandlerTouchEvent): void {
+		this._longTap = true;
+
+		if (this._startTrackPoint === null) {
+			const point: Point = { x: event.localX, y: event.localY };
+			this._startTrackingMode(point, point);
+		}
+	}
+
+	public mouseLeaveEvent(event: MouseEventHandlerMouseEvent): void {
+		if (this._state === null) {
+			return;
+		}
+		this._onMouseEvent();
 
 		this._state.model().setHoveredSource(null);
-		this._chart.model().clearCurrentPosition();
+		this._clearCrosshairPosition();
 	}
 
 	public clicked(): ISubscription<TimePointIndex | null, Point> {
@@ -357,6 +331,7 @@ export class PaneWidget implements IDestroyable {
 
 	public pinchStartEvent(): void {
 		this._prevPinchScale = 1;
+		this._model().stopTimeScaleAnimation();
 	}
 
 	public pinchEvent(middlePoint: Position, scale: number): void {
@@ -367,7 +342,48 @@ export class PaneWidget implements IDestroyable {
 		const zoomScale = (scale - this._prevPinchScale) * 5;
 		this._prevPinchScale = scale;
 
-		this._chart.model().zoomTime(middlePoint.x as Coordinate, zoomScale);
+		this._model().zoomTime(middlePoint.x as Coordinate, zoomScale);
+	}
+
+	public touchStartEvent(event: MouseEventHandlerTouchEvent): void {
+		this._longTap = false;
+		this._exitTrackingModeOnNextTry = this._startTrackPoint !== null;
+
+		this._mouseTouchDownEvent();
+
+		if (this._startTrackPoint !== null) {
+			const crosshair = this._model().crosshairSource();
+			this._initCrosshairPosition = { x: crosshair.appliedX(), y: crosshair.appliedY() };
+			this._startTrackPoint = { x: event.localX, y: event.localY };
+		}
+	}
+
+	public touchMoveEvent(event: MouseEventHandlerTouchEvent): void {
+		if (this._state === null) {
+			return;
+		}
+
+		const x = event.localX;
+		const y = event.localY;
+		if (this._startTrackPoint !== null) {
+			// tracking mode: move crosshair
+			this._exitTrackingModeOnNextTry = false;
+			const origPoint = ensureNotNull(this._initCrosshairPosition);
+			const newX = origPoint.x + (x - this._startTrackPoint.x) as Coordinate;
+			const newY = origPoint.y + (y - this._startTrackPoint.y) as Coordinate;
+			this._setCrosshairPosition(newX, newY);
+			return;
+		}
+
+		this._pressedMouseTouchMoveEvent(event);
+	}
+
+	public touchEndEvent(event: MouseEventHandlerTouchEvent): void {
+		if (this.chart().options().trackingMode.exitMode === TrackingModeExitMode.OnTouchEnd) {
+			this._exitTrackingModeOnNextTry = true;
+		}
+		this._tryExitTrackingMode();
+		this._endScroll(event);
 	}
 
 	public hitTest(x: Coordinate, y: Coordinate): HitTestResult | null {
@@ -382,7 +398,8 @@ export class PaneWidget implements IDestroyable {
 			if (sourceResult !== null) {
 				return {
 					source: source,
-					view: sourceResult,
+					view: sourceResult.view,
+					object: sourceResult.object,
 				};
 			}
 		}
@@ -390,8 +407,9 @@ export class PaneWidget implements IDestroyable {
 		return null;
 	}
 
-	public setPriceAxisSize(width: number): void {
-		ensureNotNull(this._priceAxisWidget).setSize(new Size(width, this._size.h));
+	public setPriceAxisSize(width: number, position: PriceAxisWidgetSide): void {
+		const priceAxisWidget = position === 'left' ? this._leftPriceAxisWidget : this._rightPriceAxisWidget;
+		ensureNotNull(priceAxisWidget).setSize(new Size(width, this._size.h));
 	}
 
 	public getSize(): Size {
@@ -408,18 +426,18 @@ export class PaneWidget implements IDestroyable {
 		}
 
 		this._size = size;
-		resizeCanvas(this._canvas, size);
-		resizeCanvas(this._topCanvas, size);
-
-		// This line is here for retina canvas shim to work
-		this._ctx = ensureNotNull(getContext2d(this._canvas));
+		this._isSettingSize = true;
+		this._canvasBinding.resizeCanvas({ width: size.w, height: size.h });
+		this._topCanvasBinding.resizeCanvas({ width: size.w, height: size.h });
+		this._isSettingSize = false;
 		this._paneCell.style.width = size.w + 'px';
 		this._paneCell.style.height = size.h + 'px';
 	}
 
-	public recalculatePriceScale(): void {
+	public recalculatePriceScales(): void {
 		const pane = ensureNotNull(this._state);
-		pane.recalculatePriceScale(pane.defaultPriceScale());
+		pane.recalculatePriceScale(pane.leftPriceScale());
+		pane.recalculatePriceScale(pane.rightPriceScale());
 
 		for (const source of pane.dataSources()) {
 			if (pane.isOverlay(source)) {
@@ -435,8 +453,12 @@ export class PaneWidget implements IDestroyable {
 		}
 	}
 
-	public paint(type: number): void {
-		if (type === 0) {
+	public getImage(): HTMLCanvasElement {
+		return this._canvasBinding.canvas;
+	}
+
+	public paint(type: InvalidationLevel): void {
+		if (type === InvalidationLevel.None) {
 			return;
 		}
 
@@ -445,49 +467,68 @@ export class PaneWidget implements IDestroyable {
 		}
 
 		if (type > InvalidationLevel.Cursor) {
-			this.recalculatePriceScale();
+			this.recalculatePriceScales();
 		}
 
-		if (this._priceAxisWidget !== null) {
-			this._priceAxisWidget.paint(type);
+		if (this._leftPriceAxisWidget !== null) {
+			this._leftPriceAxisWidget.paint(type);
+		}
+		if (this._rightPriceAxisWidget !== null) {
+			this._rightPriceAxisWidget.paint(type);
 		}
 
-		this._topCtx.clearRect(-0.5, -0.5, this._size.w, this._size.h);
-
-		if (type === InvalidationLevel.Cursor) {
-			this._drawCrossHair(this._topCtx);
-		} else {
-			this._drawBackground(this._ctx, this._backgroundColor());
-
+		if (type !== InvalidationLevel.Cursor) {
+			const ctx = getContext2D(this._canvasBinding.canvas);
+			ctx.save();
+			this._drawBackground(ctx, this._canvasBinding.pixelRatio);
 			if (this._state) {
-				this._drawGrid(this._ctx);
-				this._drawWatermark(this._ctx);
-				this._drawSources(this._ctx);
-
-				this._drawCrossHair(this._topCtx);
+				this._drawGrid(ctx, this._canvasBinding.pixelRatio);
+				this._drawWatermark(ctx, this._canvasBinding.pixelRatio);
+				this._drawSources(ctx, this._canvasBinding.pixelRatio, sourcePaneViews);
+				this._drawSources(ctx, this._canvasBinding.pixelRatio, sourceLabelPaneViews);
 			}
+			ctx.restore();
+		}
+
+		const topCtx = getContext2D(this._topCanvasBinding.canvas);
+		topCtx.clearRect(0, 0, Math.ceil(this._size.w * this._topCanvasBinding.pixelRatio), Math.ceil(this._size.h * this._topCanvasBinding.pixelRatio));
+		this._drawSources(topCtx, this._canvasBinding.pixelRatio, sourceTopPaneViews);
+		this._drawCrosshair(topCtx, this._topCanvasBinding.pixelRatio);
+	}
+
+	public leftPriceAxisWidget(): PriceAxisWidget | null {
+		return this._leftPriceAxisWidget;
+	}
+
+	public getPaneCell(): HTMLElement {
+		return this._paneCell;
+	}
+
+	public rightPriceAxisWidget(): PriceAxisWidget | null {
+		return this._rightPriceAxisWidget;
+	}
+
+	public setCrossHair(x: number, y: number, visible: boolean): void {
+		if (!this._state) {
+			return;
+		}
+		if (visible) {
+			const xCoord = x as Coordinate;
+			const yCoord = y as Coordinate;
+
+			// if (!mobileTouch) {
+			this._setCrosshairPositionNoFire(xCoord, yCoord);
+			// }
+		} else {
+			this._state.model().setHoveredSource(null);
+			// if (!isMobile) {
+			this._clearCrosshairPosition();
+			// }
 		}
 	}
 
-	public priceAxisWidget(): PriceAxisWidget | null {
-		return this._priceAxisWidget;
-	}
-
-	public disableBranding(): void {
-		if (this._brandingElement !== null) {
-			this._paneCell.removeChild(this._brandingElement);
-			this._brandingElement = null;
-		}
-	}
-
-	public updateBranding(): void {
-		if (this._brandingElement !== null) {
-			this._brandingElement.style.color = colorWithTransparency(this._chart.options().layout.textColor, 0.9);
-		}
-	}
-
-	private _backgroundColor(): string {
-		return this._chart.options().layout.backgroundColor;
+	private _setCrosshairPositionNoFire(x: Coordinate, y: Coordinate): void {
+		this._model().setAndSaveCurrentPosition(this._correctXCoord(x), this._correctYCoord(y), ensureNotNull(this._state), false);
 	}
 
 	private _onStateDestroyed(): void {
@@ -498,114 +539,103 @@ export class PaneWidget implements IDestroyable {
 		this._state = null;
 	}
 
-	private _drawBackground(ctx: CanvasRenderingContext2D, color: string): void {
-		clearRect(ctx, 0, 0, this._size.w, this._size.h, color);
+	private _fireClickedDelegate(event: MouseEventHandlerEventBase): void {
+		const x = event.localX;
+		const y = event.localY;
+
+		if (this._clicked.hasListeners()) {
+			const paneIndex = this._model().getPaneIndex(ensureNotNull(this._state));
+			this._clicked.fire(this._model().timeScale().coordinateToIndex(x), { x, y, paneIndex });
+		}
 	}
 
-	private _drawGrid(ctx: CanvasRenderingContext2D): void {
-		const state = ensureNotNull(this._state);
-		const source = this._chart.model().gridSource();
-		// NOTE: grid source requires Pane instance for paneViews (for the nonce)
-		const paneViews = source.paneViews(state);
-		const height = state.height();
-		const width = state.width();
-		for (const paneView of paneViews) {
-			ctx.save();
-			const renderer = paneView.renderer(height, width);
-			if (renderer !== null) {
-				renderer.draw(ctx, false);
-			}
+	private _drawBackground(ctx: CanvasRenderingContext2D, pixelRatio: number): void {
+		drawScaled(ctx, pixelRatio, () => {
+			const model = this._model();
+			const topColor = model.backgroundTopColor();
+			const bottomColor = model.backgroundBottomColor();
 
+			if (topColor === bottomColor) {
+				clearRect(ctx, 0, 0, this._size.w, this._size.h, bottomColor);
+			} else {
+				clearRectWithGradient(ctx, 0, 0, this._size.w, this._size.h, topColor, bottomColor);
+			}
+		});
+	}
+
+	private _drawGrid(ctx: CanvasRenderingContext2D, pixelRatio: number): void {
+		const state = ensureNotNull(this._state);
+		const paneView = state.grid().paneView();
+		const renderer = paneView.renderer(state.height(), state.width(), state);
+
+		if (renderer !== null) {
+			ctx.save();
+			renderer.draw(ctx, pixelRatio, false);
 			ctx.restore();
 		}
 	}
 
-	private _drawWatermark(ctx: CanvasRenderingContext2D): void {
-		const source = this._chart.model().watermarkSource();
-		if (source === null) {
-			return;
-		}
-
-		const state = ensureNotNull(this._state);
-		if (!state.containsSeries()) {
-			return;
-		}
-
-		const paneViews = source.paneViews();
-		const height = state.height();
-		const width = state.width();
-		for (const paneView of paneViews) {
-			ctx.save();
-			const renderer = paneView.renderer(height, width);
-			if (renderer !== null) {
-				renderer.draw(ctx, false);
-			}
-
-			ctx.restore();
-		}
+	private _drawWatermark(ctx: CanvasRenderingContext2D, pixelRatio: number): void {
+		const source = this._model().watermarkSource();
+		this._drawSourceImpl(ctx, pixelRatio, sourcePaneViews, drawBackground, source);
+		this._drawSourceImpl(ctx, pixelRatio, sourcePaneViews, drawForeground, source);
 	}
 
-	private _drawCrossHair(ctx: CanvasRenderingContext2D): void {
-		this._drawSource(this._chart.model().crossHairSource(), ctx);
+	private _drawCrosshair(ctx: CanvasRenderingContext2D, pixelRatio: number): void {
+		this._drawSourceImpl(ctx, pixelRatio, sourcePaneViews, drawForeground, this._model().crosshairSource());
 	}
 
-	private _drawSources(ctx: CanvasRenderingContext2D): void {
+	private _drawSources(ctx: CanvasRenderingContext2D, pixelRatio: number, paneViewsGetter: PaneViewsGetter): void {
 		const state = ensureNotNull(this._state);
 		const sources = state.orderedSources();
-		const crossHairSource = this._chart.model().crossHairSource();
 
 		for (const source of sources) {
-			this._drawSourceBackground(source, ctx);
+			this._drawSourceImpl(ctx, pixelRatio, paneViewsGetter, drawBackground, source);
 		}
 
 		for (const source of sources) {
-			if (source !== crossHairSource) {
-				this._drawSource(source, ctx);
-			}
+			this._drawSourceImpl(ctx, pixelRatio, paneViewsGetter, drawForeground, source);
 		}
 	}
 
-	private _drawSource(source: IDataSource, ctx: CanvasRenderingContext2D): void {
+	private _drawSourceImpl(
+		ctx: CanvasRenderingContext2D,
+		pixelRatio: number,
+		paneViewsGetter: PaneViewsGetter,
+		drawFn: DrawFunction,
+		source: IDataSource
+	): void {
 		const state = ensureNotNull(this._state);
-		const paneViews = source.paneViews(state);
+		const paneViews = paneViewsGetter(source, state);
 		const height = state.height();
 		const width = state.width();
-		const isHovered = state.model().hoveredSource() === source;
+		const hoveredSource = state.model().hoveredSource();
+		const isHovered = hoveredSource !== null && hoveredSource.source === source;
+		const objecId = hoveredSource !== null && isHovered && hoveredSource.object !== undefined
+			? hoveredSource.object.hitTestData
+			: undefined;
 
 		for (const paneView of paneViews) {
-			const renderer = paneView.renderer(height, width);
+			const renderer = paneView.renderer(height, width, state);
 			if (renderer !== null) {
 				ctx.save();
-				renderer.draw(ctx, isHovered);
+				drawFn(renderer, ctx, pixelRatio, isHovered, objecId);
 				ctx.restore();
 			}
 		}
 	}
 
-	private _drawSourceBackground(source: IDataSource, ctx: CanvasRenderingContext2D): void {
+	private _hitTestPaneView(paneViews: readonly IPaneView[], x: Coordinate, y: Coordinate): HitTestPaneViewResult | null {
 		const state = ensureNotNull(this._state);
-		const paneViews = source.paneViews(state);
-		const height = state.height();
-		const width = state.width();
-		const isHovered = state.model().hoveredSource() === source;
-
 		for (const paneView of paneViews) {
-			const renderer = paneView.renderer(height, width);
-			if (renderer !== null && renderer.drawBackground !== undefined) {
-				ctx.save();
-				renderer.drawBackground(ctx, isHovered);
-				ctx.restore();
-			}
-		}
-	}
-
-	private _hitTestPaneView(paneViews: ReadonlyArray<IPaneView>, x: Coordinate, y: Coordinate): IPaneView | null {
-		for (const paneView of paneViews) {
-			const renderer = paneView.renderer(this._size.h, this._size.w);
+			const renderer = paneView.renderer(this._size.h, this._size.w, state);
 			if (renderer !== null && renderer.hitTest) {
 				const result = renderer.hitTest(x, y);
-				if (result) {
-					return paneView;
+				if (result !== null) {
+					return {
+						view: paneView,
+						object: result,
+					};
 				}
 			}
 		}
@@ -613,64 +643,217 @@ export class PaneWidget implements IDestroyable {
 		return null;
 	}
 
-	private _recreatePriceAxisWidget(): void {
-		this._recreatePriceAxisWidgetImpl();
-		this._chart.adjustSize();
-	}
-
-	private _recreatePriceAxisWidgetImpl(): void {
+	private _recreatePriceAxisWidgets(): void {
 		if (this._state === null) {
 			return;
 		}
 		const chart = this._chart;
-		const axisPosition = this._state.defaultPriceScale().options().position;
-		if (this._priceAxisPosition === axisPosition) {
+		const leftAxisVisible = this._state.leftPriceScale().options().visible;
+		const rightAxisVisible = this._state.rightPriceScale().options().visible;
+		if (!leftAxisVisible && this._leftPriceAxisWidget !== null) {
+			this._leftAxisCell.removeChild(this._leftPriceAxisWidget.getElement());
+			this._leftPriceAxisWidget.destroy();
+			this._leftPriceAxisWidget = null;
+		}
+		if (!rightAxisVisible && this._rightPriceAxisWidget !== null) {
+			this._rightAxisCell.removeChild(this._rightPriceAxisWidget.getElement());
+			this._rightPriceAxisWidget.destroy();
+			this._rightPriceAxisWidget = null;
+		}
+		const rendererOptionsProvider = chart.model().rendererOptionsProvider();
+		if (leftAxisVisible && this._leftPriceAxisWidget === null) {
+			this._leftPriceAxisWidget = new PriceAxisWidget(this, chart.options(), rendererOptionsProvider, 'left');
+			this._leftAxisCell.appendChild(this._leftPriceAxisWidget.getElement());
+		}
+		if (rightAxisVisible && this._rightPriceAxisWidget === null) {
+			this._rightPriceAxisWidget = new PriceAxisWidget(this, chart.options(), rendererOptionsProvider, 'right');
+			this._rightAxisCell.appendChild(this._rightPriceAxisWidget.getElement());
+		}
+	}
+
+	private _preventScroll(event: TouchMouseEvent): boolean {
+		return event.isTouch && this._longTap || this._startTrackPoint !== null;
+	}
+
+	private _correctXCoord(x: Coordinate): Coordinate {
+		return Math.max(0, Math.min(x, this._size.w - 1)) as Coordinate;
+	}
+
+	private _correctYCoord(y: Coordinate): Coordinate {
+		return Math.max(0, Math.min(y, this._size.h - 1)) as Coordinate;
+	}
+
+	private _setCrosshairPosition(x: Coordinate, y: Coordinate): void {
+		this._model().setAndSaveCurrentPosition(this._correctXCoord(x), this._correctYCoord(y), ensureNotNull(this._state));
+	}
+
+	private _clearCrosshairPosition(): void {
+		this._model().clearCurrentPosition();
+	}
+
+	private _tryExitTrackingMode(): void {
+		if (this._exitTrackingModeOnNextTry) {
+			this._startTrackPoint = null;
+			this._clearCrosshairPosition();
+		}
+	}
+
+	private _startTrackingMode(startTrackPoint: Point, crossHairPosition: Point): void {
+		this._startTrackPoint = startTrackPoint;
+		this._exitTrackingModeOnNextTry = false;
+		this._setCrosshairPosition(crossHairPosition.x, crossHairPosition.y);
+		const crosshair = this._model().crosshairSource();
+		this._initCrosshairPosition = { x: crosshair.appliedX(), y: crosshair.appliedY() };
+	}
+
+	private _model(): ChartModel {
+		return this._chart.model();
+	}
+
+	private _endScroll(event: TouchMouseEvent): void {
+		if (!this._isScrolling) {
 			return;
 		}
-		if (this._priceAxisWidget !== null) {
-			if (this._priceAxisWidget.isLeft()) {
-				this._leftAxisCell.removeChild(this._priceAxisWidget.getElement());
+
+		const model = this._model();
+		const state = this.state();
+
+		model.endScrollPrice(state, state.defaultPriceScale());
+
+		this._startScrollingPos = null;
+		this._isScrolling = false;
+		model.endScrollTime();
+
+		if (this._scrollXAnimation !== null) {
+			const startAnimationTime = performance.now();
+			const timeScale = model.timeScale();
+
+			this._scrollXAnimation.start(timeScale.rightOffset() as Coordinate, startAnimationTime);
+
+			if (!this._scrollXAnimation.finished(startAnimationTime)) {
+				model.setTimeScaleAnimation(this._scrollXAnimation);
+			}
+		}
+	}
+
+	private _onMouseEvent(): void {
+		this._startTrackPoint = null;
+	}
+
+	private _mouseTouchDownEvent(): void {
+		if (!this._state) {
+			return;
+		}
+
+		this._model().stopTimeScaleAnimation();
+
+		if (document.activeElement !== document.body && document.activeElement !== document.documentElement) {
+			// If any focusable element except the page itself is focused, remove the focus
+			(ensureNotNull(document.activeElement) as HTMLElement).blur();
+		} else {
+			// Clear selection
+			const selection = document.getSelection();
+			if (selection !== null) {
+				selection.removeAllRanges();
+			}
+		}
+
+		const priceScale = this._state.defaultPriceScale();
+
+		if (priceScale.isEmpty() || this._model().timeScale().isEmpty()) {
+			return;
+		}
+	}
+
+	// eslint-disable-next-line complexity
+	private _pressedMouseTouchMoveEvent(event: TouchMouseEvent): void {
+		if (this._state === null) {
+			return;
+		}
+
+		const model = this._model();
+		const timeScale = model.timeScale();
+
+		if (timeScale.isEmpty()) {
+			return;
+		}
+
+		const chartOptions = this._chart.options();
+		const scrollOptions = chartOptions.handleScroll;
+		const kineticScrollOptions = chartOptions.kineticScroll;
+		if (
+			(!scrollOptions.pressedMouseMove || event.isTouch) &&
+			(!scrollOptions.horzTouchDrag && !scrollOptions.vertTouchDrag || !event.isTouch)
+		) {
+			return;
+		}
+
+		const priceScale = this._state.defaultPriceScale();
+
+		const now = performance.now();
+
+		if (this._startScrollingPos === null && !this._preventScroll(event)) {
+			this._startScrollingPos = {
+				x: event.clientX,
+				y: event.clientY,
+				timestamp: now,
+				localX: event.localX,
+				localY: event.localY,
+			};
+		}
+
+		if (
+			this._startScrollingPos !== null &&
+			!this._isScrolling &&
+			(this._startScrollingPos.x !== event.clientX || this._startScrollingPos.y !== event.clientY)
+		) {
+			if (event.isTouch && kineticScrollOptions.touch || !event.isTouch && kineticScrollOptions.mouse) {
+				const barSpacing = timeScale.barSpacing();
+				this._scrollXAnimation = new KineticAnimation(
+					KineticScrollConstants.MinScrollSpeed / barSpacing,
+					KineticScrollConstants.MaxScrollSpeed / barSpacing,
+					KineticScrollConstants.DumpingCoeff,
+					KineticScrollConstants.ScrollMinMove / barSpacing
+				);
+				this._scrollXAnimation.addPosition(timeScale.rightOffset() as Coordinate, this._startScrollingPos.timestamp);
 			} else {
-				this._rightAxisCell.removeChild(this._priceAxisWidget.getElement());
+				this._scrollXAnimation = null;
 			}
 
-			this._priceAxisWidget.destroy();
-			this._priceAxisWidget = null;
+			if (!priceScale.isEmpty()) {
+				model.startScrollPrice(this._state, priceScale, event.localY);
+			}
+
+			model.startScrollTime(event.localX);
+			this._isScrolling = true;
 		}
 
-		if (axisPosition !== 'none') {
-			const rendererOptionsProvider = chart.model().rendererOptionsProvider();
-			this._priceAxisWidget = new PriceAxisWidget(this, chart.options().layout, rendererOptionsProvider, axisPosition);
-
-			if (axisPosition === 'left') {
-				this._leftAxisCell.appendChild(this._priceAxisWidget.getElement());
+		if (this._isScrolling) {
+			// this allows scrolling not default price scales
+			if (!priceScale.isEmpty()) {
+				model.scrollPriceTo(this._state, priceScale, event.localY);
 			}
 
-			if (axisPosition === 'right') {
-				this._rightAxisCell.appendChild(this._priceAxisWidget.getElement());
+			model.scrollTimeTo(event.localX);
+			if (this._scrollXAnimation !== null) {
+				this._scrollXAnimation.addPosition(timeScale.rightOffset() as Coordinate, now);
 			}
 		}
-		this._priceAxisPosition = axisPosition;
 	}
 
-	private _createLogoElement(): void {
-		const linkEl = document.createElement('a');
-		linkEl.href = `https://www.tradingview.com/?utm_source=${encodeURIComponent(location.href)}&utm_medium=library_new&utm_campaign=lightweight-charts`;
-		linkEl.innerText = 'TradingView';
-		linkEl.title = 'TradingView Lightweight Charts';
-		linkEl.target = '_blank';
-		linkEl.rel = 'noopener';
+	private readonly _canvasConfiguredHandler = () => {
+		if (this._isSettingSize || this._state === null) {
+			return;
+		}
 
-		const style = linkEl.style;
-		style.zIndex = '1000';
-		style.fontSize = '7pt';
-		style.position = 'absolute';
-		style.left = '6px';
-		style.bottom = '4px';
-		style.textDecoration = 'none';
-		style.userSelect = 'none';
-		this._paneCell.appendChild(linkEl);
-		this._brandingElement = linkEl;
-		this._brandingElement.style.fontFamily = defaultFontFamily;
-	}
+		this._model().lightUpdate();
+	};
+
+	private readonly _topCanvasConfiguredHandler = () => {
+		if (this._isSettingSize || this._state === null) {
+			return;
+		}
+
+		this._model().lightUpdate();
+	};
 }

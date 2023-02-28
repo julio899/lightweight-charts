@@ -1,47 +1,54 @@
 import { LineStyle } from '../renderers/draw-line';
 import { GridPaneView } from '../views/pane/grid-pane-view';
-import { IPaneView } from '../views/pane/ipane-view';
+import { IUpdatablePaneView } from '../views/pane/iupdatable-pane-view';
 
 import { Pane } from './pane';
 
-/** Structure describing horizontal or vertical grid lines options */
+/** Grid line options. */
 export interface GridLineOptions {
-	/** Color of the lines */
+	/**
+	 * Line color.
+	 *
+	 * @defaultValue `'#D6DCDE'`
+	 */
 	color: string;
-	/** Style of the lines */
+
+	/**
+	 * Line style.
+	 *
+	 * @defaultValue {@link LineStyle.Solid}
+	 */
 	style: LineStyle;
-	/** Visibility of the lines */
+
+	/**
+	 * Display the lines.
+	 *
+	 * @defaultValue `true`
+	 */
 	visible: boolean;
 }
 
-/** Structure describing grid options */
+/** Structure describing grid options. */
 export interface GridOptions {
-	/** Vertical grid lines options */
+	/**
+	 * Vertical grid line options.
+	 */
 	vertLines: GridLineOptions;
-	/** Horizontal grid lines options */
+
+	/**
+	 * Horizontal grid line options.
+	 */
 	horzLines: GridLineOptions;
 }
 
 export class Grid {
-	private _paneViews: WeakMap<Pane, GridPaneView[]> = new WeakMap();
-	private _invalidated: boolean = true;
+	private _paneView: GridPaneView;
 
-	public paneViews(pane: Pane): ReadonlyArray<IPaneView> {
-		let paneViews = this._paneViews.get(pane);
-		if (paneViews === undefined) {
-			paneViews = [new GridPaneView(pane)];
-			this._paneViews.set(pane, paneViews);
-		}
-
-		if (this._invalidated) {
-			paneViews.forEach((view: GridPaneView) => view.update());
-			this._invalidated = false;
-		}
-
-		return paneViews;
+	public constructor(pane: Pane) {
+		this._paneView = new GridPaneView(pane);
 	}
 
-	public invalidate(): void {
-		this._invalidated = true;
+	public paneView(): IUpdatablePaneView {
+		return this._paneView;
 	}
 }

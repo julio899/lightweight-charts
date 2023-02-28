@@ -1,31 +1,34 @@
 import { Series } from '../../model/series';
-import { LineStyle } from '../../renderers/draw-line';
+import { PriceLineSource } from '../../model/series-options';
 
 import { SeriesHorizontalLinePaneView } from './series-horizontal-line-pane-view';
 
 export class SeriesPriceLinePaneView extends SeriesHorizontalLinePaneView {
+	// eslint-disable-next-line no-useless-constructor
 	public constructor(series: Series) {
 		super(series);
-		this._lineRendererData.lineStyle = LineStyle.Dotted;
 	}
 
-	protected _updateImpl(): void {
-		this._lineRendererData.visible = false;
+	protected _updateImpl(height: number, width: number): void {
+		const data = this._lineRendererData;
+		data.visible = false;
 
-		if (!this._series.internalOptions().priceLineVisible) {
+		const seriesOptions = this._series.options();
+		if (!seriesOptions.priceLineVisible || !this._series.visible()) {
 			return;
 		}
 
-		const data = this._series.lastValueData(undefined, true);
-		if (data.noData) {
+		const lastValueData = this._series.lastValueData(seriesOptions.priceLineSource === PriceLineSource.LastBar);
+		if (lastValueData.noData) {
 			return;
 		}
 
-		this._lineRendererData.visible = true;
-		this._lineRendererData.y = data.coordinate;
-		this._lineRendererData.color = this._series.priceLineColor(data.color);
-		this._lineRendererData.width = this._model.timeScale().width();
-		this._lineRendererData.height = this._series.priceScale().height();
-		this._lineRendererData.lineWidth = this._series.internalOptions().priceLineWidth;
+		data.visible = true;
+		data.y = lastValueData.coordinate;
+		data.color = this._series.priceLineColor(lastValueData.color);
+		data.width = width;
+		data.height = height;
+		data.lineWidth = seriesOptions.priceLineWidth;
+		data.lineStyle = seriesOptions.priceLineStyle;
 	}
 }

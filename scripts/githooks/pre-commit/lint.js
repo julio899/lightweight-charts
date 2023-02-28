@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 
-/* eslint-env node */
-/* eslint-disable no-console */
-
 const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +13,7 @@ function getStagedFiles() {
 	return childProcess.execSync(
 		'git diff --cached --name-only --diff-filter=ACM',
 		{ encoding: 'utf-8' }
-	).split('\n').map((str) => str.trim()).filter((str) => str.length !== 0);
+	).split('\n').map(str => str.trim()).filter(str => str.length !== 0);
 }
 
 function checkGitConflicts(files) {
@@ -67,12 +64,12 @@ function runForFiles(cmd, files) {
 	return run(cmd);
 }
 
-function runTSLintForFiles(tsFiles) {
-	return runForFiles('node ./node_modules/tslint/bin/tslint --config tslint.json', tsFiles);
-}
+function runESLintForFiles(files) {
+	if (files.length === 0) {
+		return false;
+	}
 
-function runESLintForFiles(jsFiles) {
-	return runForFiles('node ./node_modules/eslint/bin/eslint --quiet --format=unix', jsFiles);
+	return runForFiles('node ./node_modules/eslint/bin/eslint --quiet --format=unix', files);
 }
 
 function runMarkdownLintForFiles(mdFiles) {
@@ -80,28 +77,40 @@ function runMarkdownLintForFiles(mdFiles) {
 }
 
 function filterByExt(files, ext) {
-	return files.filter((file) => path.extname(file) === ext);
+	return files.filter(file => path.extname(file) === ext);
 }
 
+// eslint-disable-next-line complexity
 function lintFiles(files) {
 	let hasErrors = false;
 
-	// eslint
+	// eslint for js and jsxd
 	hasErrors = runESLintForFiles(filterByExt(files, '.js')) || hasErrors;
+	hasErrors = runESLintForFiles(filterByExt(files, '.jsx')) || hasErrors;
 
-	// tsc & tslint
+	// tsc & eslint for ts files
 	const tsFiles = filterByExt(files, '.ts');
-	if (tsFiles.length !== 0) {
-		hasErrors = run('npm run tsc-all') || hasErrors;
-
-		// we won't run tslint for all files
-		// because it's slow as fuck (18s for all project)
-		// but we want to commit asap
-		hasErrors = runTSLintForFiles(tsFiles) || hasErrors;
+	const tsxFiles = filterByExt(files, '.tsx');
+	if (tsFiles.length !== 0 || tsxFiles.length !== 0) {
+		hasErrors = run('npm run tsc-verify') || hasErrors;
+		hasErrors = runESLintForFiles(tsFiles) || hasErrors;
+		hasErrors = runESLintForFiles(tsxFiles) || hasErrors;
 	}
 
 	// markdown
-	hasErrors = runMarkdownLintForFiles(filterByExt(files, '.md')) || hasErrors;
+	const mdFiles = filterByExt(files, '.md');
+	if (mdFiles.length !== 0) {
+		// yeah, eslint might check code inside markdown files
+		hasErrors = runESLintForFiles(mdFiles) || hasErrors;
+		hasErrors = runMarkdownLintForFiles(mdFiles) || hasErrors;
+		hasErrors = run('node scripts/check-markdown-links.js') || hasErrors;
+	}
+
+	// markdown react
+	const mdxFiles = filterByExt(files, '.mdx');
+	if (mdxFiles.length !== 0) {
+		hasErrors = runESLintForFiles(mdxFiles) || hasErrors;
+	}
 
 	return hasErrors;
 }

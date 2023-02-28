@@ -1,17 +1,19 @@
+import { ensureNotNull } from '../helpers/assertions';
+
 import { BarCoordinates, BarPrices } from '../model/bar';
+import { BarColorerStyle } from '../model/series-bar-colorer';
 import { SeriesItemsIndexesRange, TimedValue } from '../model/time-data';
 
 import { IPaneRenderer } from './ipane-renderer';
 import { optimalBarWidth } from './optimal-bar-width';
 
-export type BarCandleItemBase = TimedValue & BarPrices & BarCoordinates;
+export type BarCandlestickItemBase = TimedValue & BarPrices & BarCoordinates;
 
-export interface BarItem extends BarCandleItemBase {
-	color: string;
+export interface BarItem extends BarCandlestickItemBase, BarColorerStyle {
 }
 
 export interface PaneRendererBarsData {
-	bars: ReadonlyArray<BarItem>;
+	bars: readonly BarItem[];
 	barSpacing: number;
 	openVisible: boolean;
 	thinBars: boolean;
@@ -26,56 +28,101 @@ export class PaneRendererBars implements IPaneRenderer {
 
 	public setData(data: PaneRendererBarsData): void {
 		this._data = data;
-		this._barWidth = optimalBarWidth(data.barSpacing);
-		this._barLineWidth = data.thinBars ? 1 : Math.max(1, Math.round(this._barWidth));
 	}
 
-	public draw(ctx: CanvasRenderingContext2D): void {
+	// eslint-disable-next-line complexity
+	public draw(ctx: CanvasRenderingContext2D, pixelRatio: number, isHovered: boolean, hitTestData?: unknown): void {
 		if (this._data === null || this._data.bars.length === 0 || this._data.visibleRange === null) {
 			return;
 		}
 
-		ctx.save();
-		ctx.translate(0.5, 0.5);
+		this._barWidth = this._calcBarWidth(pixelRatio);
 
-		const offset = this._data.thinBars ? 1 : Math.round(this._barWidth);
-		const negativeOffset = this._data.thinBars ? 1 : offset / 2;
-
-		let prevColor: string | null = null;
-
-		for (let i = this._data.visibleRange.from; i < this._data.visibleRange.to; ++i) {
-			const bar = this._data.bars[i];
-			if (prevColor !== bar.color) {
-				ctx.fillStyle = bar.color;
-				prevColor = bar.color;
-			}
-
-			ctx.fillRect(
-				Math.round(bar.x - this._barLineWidth / 2),
-				Math.round(bar.highY - negativeOffset),
-				Math.round(this._barLineWidth),
-				Math.round(bar.lowY - bar.highY + offset)
-			);
-
-			if (this._barLineWidth < (this._data.barSpacing - 1)) {
-				if (this._data.openVisible) {
-					ctx.fillRect(
-						Math.round(bar.x - this._barWidth * 1.5),
-						Math.floor(bar.openY - negativeOffset),
-						Math.round(this._barWidth * 1.5),
-						offset
-					);
-				}
-
-				ctx.fillRect(
-					Math.round(bar.x),
-					Math.floor(bar.closeY - negativeOffset),
-					Math.round(this._barWidth * 1.5),
-					offset
-				);
+		// grid and crosshair have line width = Math.floor(pixelRatio)
+		// if this value is odd, we have to make bars' width odd
+		// if this value is even, we have to make bars' width even
+		// in order of keeping crosshair-over-bar drawing symmetric
+		if (this._barWidth >= 2) {
+			const lineWidth = Math.max(1, Math.floor(pixelRatio));
+			if ((lineWidth % 2) !== (this._barWidth % 2)) {
+				this._barWidth--;
 			}
 		}
 
-		ctx.restore();
+		// if scale is compressed, bar could become less than 1 CSS pixel
+		this._barLineWidth = this._data.thinBars ? Math.min(this._barWidth, Math.floor(pixelRatio)) : this._barWidth;
+		let prevColor: string | null = null;
+
+		const drawOpenClose = this._barLineWidth <= this._barWidth && this._data.barSpacing >= Math.floor(1.5 * pixelRatio);
+		for (let i = this._data.visibleRange.from; i < this._data.visibleRange.to; ++i) {
+			const bar = this._data.bars[i];
+			if (prevColor !== bar.barColor) {
+				ctx.fillStyle = bar.barColor;
+				prevColor = bar.barColor;
+			}
+
+			const bodyWidthHalf = Math.floor(this._barLineWidth * 0.5);
+
+			const bodyCenter = Math.round(bar.x * pixelRatio);
+			const bodyLeft = bodyCenter - bodyWidthHalf;
+			const bodyWidth = this._barLineWidth;
+			const bodyRight = bodyLeft + bodyWidth - 1;
+
+			const high = Math.min(bar.highY, bar.lowY);
+			const low = Math.max(bar.highY, bar.lowY);
+
+			const bodyTop = Math.round(high * pixelRatio) - bodyWidthHalf;
+
+			const bodyBottom = Math.round(low * pixelRatio) + bodyWidthHalf;
+
+			const bodyHeight = Math.max((bodyBottom - bodyTop), this._barLineWidth);
+
+			ctx.fillRect(
+				bodyLeft,
+				bodyTop,
+				bodyWidth,
+				bodyHeight
+			);
+
+			const sideWidth = Math.ceil(this._barWidth * 1.5);
+
+			if (drawOpenClose) {
+				if (this._data.openVisible) {
+					const openLeft = bodyCenter - sideWidth;
+					let openTop = Math.max(bodyTop, Math.round(bar.openY * pixelRatio) - bodyWidthHalf);
+					let openBottom = openTop + bodyWidth - 1;
+					if (openBottom > bodyTop + bodyHeight - 1) {
+						openBottom = bodyTop + bodyHeight - 1;
+						openTop = openBottom - bodyWidth + 1;
+					}
+					ctx.fillRect(
+						openLeft,
+						openTop,
+						bodyLeft - openLeft,
+						openBottom - openTop + 1
+					);
+				}
+
+				const closeRight = bodyCenter + sideWidth;
+				let closeTop = Math.max(bodyTop, Math.round(bar.closeY * pixelRatio) - bodyWidthHalf);
+				let closeBottom = closeTop + bodyWidth - 1;
+				if (closeBottom > bodyTop + bodyHeight - 1) {
+					closeBottom = bodyTop + bodyHeight - 1;
+					closeTop = closeBottom - bodyWidth + 1;
+				}
+
+				ctx.fillRect(
+					bodyRight + 1,
+					closeTop,
+					closeRight - bodyRight,
+					closeBottom - closeTop + 1
+				);
+			}
+		}
+	}
+
+	private _calcBarWidth(pixelRatio: number): number {
+		const limit = Math.floor(pixelRatio);
+		return Math.max(limit, Math.floor(optimalBarWidth(ensureNotNull(this._data).barSpacing, pixelRatio)));
 	}
 }

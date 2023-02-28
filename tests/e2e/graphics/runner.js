@@ -3,16 +3,23 @@
 const fs = require('fs');
 const path = require('path');
 
+const yargs = require('yargs/yargs');
+const argv = yargs(process.argv.slice(4)).argv;
+
 const Mocha = require('mocha');
 
 const serveLocalFiles = require('../serve-local-files').serveLocalFiles;
 
+const mochaConfig = require('../../../.mocharc.js');
+
 // override tsconfig
-process.env.TS_NODE_PROJECT = path.resolve(__dirname, '../tsconfig.json');
+process.env.TS_NODE_PROJECT = path.resolve(__dirname, '../tsconfig.composite.json');
 
-require('ts-node/register');
+mochaConfig.require.forEach(module => {
+	require(module);
+});
 
-if (process.argv.length !== 4) {
+if (process.argv.length < 4) {
 	console.log('Usage: runner PATH_TO_GOLDEN_STANDALONE_MODULE PATH_TO_TEST_STANDALONE_MODULE');
 	process.exit(1);
 }
@@ -44,13 +51,25 @@ process.env.TEST_STANDALONE_PATH = testStandalonePath;
 
 function runMocha(closeServer) {
 	console.log('Running tests...');
+
+	/** @type Partial<Mocha.MochaOptions> */
+	const mochaOptions = Object.fromEntries(
+		Object.entries(argv).filter(entry => !['_', '$0'].includes(entry[0]))
+	);
+
 	const mocha = new Mocha({
 		timeout: 20000,
 		slow: 10000,
+		reporter: mochaConfig.reporter,
+		reporterOptions: mochaConfig._reporterOptions,
+		...mochaOptions,
 	});
 
-	mocha.checkLeaks();
-	mocha.hideDiff(false);
+	if (mochaConfig.checkLeaks) {
+		mocha.checkLeaks();
+	}
+
+	mocha.diff(mochaConfig.diff);
 	mocha.addFile(path.resolve(__dirname, './graphics-test-cases.ts'));
 
 	mocha.run(failures => {

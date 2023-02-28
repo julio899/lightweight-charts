@@ -1,4 +1,4 @@
-import { resetTransparency } from '../helpers/color';
+import { drawRoundRectWithInnerBorder, drawScaled } from '../helpers/canvas-helpers';
 
 import { TextWidthCache } from '../model/text-width-cache';
 
@@ -8,6 +8,24 @@ import {
 	PriceAxisViewRendererData,
 	PriceAxisViewRendererOptions,
 } from './iprice-axis-view-renderer';
+
+interface Geometry {
+	alignRight: boolean;
+	yTop: number;
+	yMid: number;
+	yBottom: number;
+	totalWidthScaled: number;
+	totalHeightScaled: number;
+	radius: number;
+	horzBorderScaled: number;
+	xOutside: number;
+	xInside: number;
+	xTick: number;
+	xText: number;
+	tickHeight: number;
+	rightScaled: number;
+	textMidCorrection: number;
+}
 
 export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 	private _data!: PriceAxisViewRendererData;
@@ -27,87 +45,74 @@ export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 		rendererOptions: PriceAxisViewRendererOptions,
 		textWidthCache: TextWidthCache,
 		width: number,
-		align: 'left' | 'right'
+		align: 'left' | 'right',
+		pixelRatio: number
 	): void {
 		if (!this._data.visible) {
 			return;
 		}
-
-		const fontSize = rendererOptions.fontSize;
 		ctx.font = rendererOptions.font;
 
-		const tickSize = this._data.tickVisible ? rendererOptions.tickLength : 0;
-		const horzBorder = this._data.borderVisible ? rendererOptions.borderSize : 0;
-		const paddingTop = rendererOptions.paddingTop;
-		const paddingBottom = rendererOptions.paddingBottom;
-		const paddingInner = rendererOptions.paddingInner;
-		const paddingOuter = rendererOptions.paddingOuter;
-		const text = this._data.text;
-		const textWidth = Math.ceil(textWidthCache.measureText(ctx, text));
-		const baselineOffset = rendererOptions.baselineOffset;
-		const totalHeight = rendererOptions.fontSize + paddingTop + paddingBottom;
-		const totalWidth = horzBorder + textWidth + paddingInner + paddingOuter + tickSize;
+		const geometry = this._calculateGeometry(ctx, rendererOptions, textWidthCache, width, align, pixelRatio);
 
-		let yMid = this._commonData.coordinate;
-		if (this._commonData.fixedCoordinate) {
-			yMid = this._commonData.fixedCoordinate;
-		}
+		const textColor = this._data.color || this._commonData.color;
+		const backgroundColor = (this._commonData.background);
 
-		const yTop = yMid - Math.floor(fontSize / 2) - paddingTop - 0.5;
-		const yBottom = yTop + totalHeight;
+		ctx.fillStyle = this._commonData.background;
 
-		const alignRight = align === 'right';
+		if (this._data.text) {
+			const drawLabelBody = (labelBackgroundColor: string, labelBorderColor?: string): void => {
+				if (geometry.alignRight) {
+					drawRoundRectWithInnerBorder(
+						ctx,
+						geometry.xOutside,
+						geometry.yTop,
+						geometry.totalWidthScaled,
+						geometry.totalHeightScaled,
+						labelBackgroundColor,
+						geometry.horzBorderScaled,
+						[geometry.radius, 0, 0, geometry.radius],
+						labelBorderColor
+					);
+				} else {
+					drawRoundRectWithInnerBorder(
+						ctx,
+						geometry.xInside,
+						geometry.yTop,
+						geometry.totalWidthScaled,
+						geometry.totalHeightScaled,
+						labelBackgroundColor,
+						geometry.horzBorderScaled,
+						[0, geometry.radius, geometry.radius, 0],
+						labelBorderColor
+					);
+				}
+			};
 
-		const xInside = alignRight ? width - horzBorder - 0.5 : 0.5;
-
-		let xOutside = xInside;
-		let xTick;
-		let xText;
-
-		ctx.fillStyle = resetTransparency(this._commonData.background);
-		ctx.lineWidth = 1;
-		ctx.lineCap = 'butt';
-
-		if (text) {
-			if (alignRight) {
-				// 2               1
-				//
-				//              6  5
-				//
-				// 3               4
-				xOutside = xInside - totalWidth;
-				xTick = xInside - tickSize;
-				xText = xOutside + paddingOuter;
-			} else {
-				// 1               2
-				//
-				// 6  5
-				//
-				// 4               3
-				xOutside = xInside + totalWidth;
-				xTick = xInside + tickSize;
-				xText = xInside + horzBorder + tickSize + paddingInner;
-			}
-
-			ctx.beginPath();
-			ctx.moveTo(xInside, yTop);
-			ctx.lineTo(xOutside, yTop);
-			ctx.lineTo(xOutside, yBottom);
-			ctx.lineTo(xInside, yBottom);
-			ctx.fill();
-
+			// draw border
+			// draw label background
+			drawLabelBody(backgroundColor, 'transparent');
+			// draw tick
 			if (this._data.tickVisible) {
-				ctx.beginPath();
-				ctx.strokeStyle = this._commonData.color;
-				ctx.moveTo(xInside, yMid);
-				ctx.lineTo(xTick, yMid);
-				ctx.stroke();
+				ctx.fillStyle = textColor;
+				ctx.fillRect(geometry.xInside, geometry.yMid, geometry.xTick - geometry.xInside, geometry.tickHeight);
+			}
+			// draw label border above the tick
+			drawLabelBody('transparent', backgroundColor);
+
+			// draw separator
+			if (this._data.borderVisible) {
+				ctx.fillStyle = rendererOptions.paneBackgroundColor;
+				ctx.fillRect(geometry.alignRight ? geometry.rightScaled - geometry.horzBorderScaled : 0, geometry.yTop, geometry.horzBorderScaled, geometry.yBottom - geometry.yTop);
 			}
 
-			ctx.textAlign = 'left';
-			ctx.fillStyle = this._commonData.color;
-
-			ctx.fillText(text, xText, yBottom - paddingBottom - baselineOffset);
+			ctx.save();
+			ctx.translate(geometry.xText, (geometry.yTop + geometry.yBottom) / 2 + geometry.textMidCorrection);
+			drawScaled(ctx, pixelRatio, () => {
+				ctx.fillStyle = textColor;
+				ctx.fillText(this._data.text, 0, 0);
+			});
+			ctx.restore();
 		}
 	}
 
@@ -117,5 +122,102 @@ export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 		}
 
 		return rendererOptions.fontSize + rendererOptions.paddingTop + rendererOptions.paddingBottom;
+	}
+
+	private _calculateGeometry(
+		ctx: CanvasRenderingContext2D,
+		rendererOptions: PriceAxisViewRendererOptions,
+		textWidthCache: TextWidthCache,
+		width: number,
+		align: 'left' | 'right',
+		pixelRatio: number
+	): Geometry {
+		const tickSize = (this._data.tickVisible || !this._data.moveTextToInvisibleTick) ? rendererOptions.tickLength : 0;
+		const horzBorder = rendererOptions.borderSize;
+		const paddingTop = rendererOptions.paddingTop + this._commonData.additionalPaddingTop;
+		const paddingBottom = rendererOptions.paddingBottom + this._commonData.additionalPaddingBottom;
+		const paddingInner = rendererOptions.paddingInner;
+		const paddingOuter = rendererOptions.paddingOuter;
+		const text = this._data.text;
+		const actualTextHeight = rendererOptions.fontSize;
+		const textMidCorrection = textWidthCache.yMidCorrection(ctx, text) * pixelRatio;
+
+		const textWidth = Math.ceil(textWidthCache.measureText(ctx, text));
+
+		const totalHeight = actualTextHeight + paddingTop + paddingBottom;
+
+		const totalWidth = horzBorder + paddingInner + paddingOuter + textWidth + tickSize;
+
+		const tickHeight = Math.max(1, Math.floor(pixelRatio));
+		let totalHeightScaled = Math.round(totalHeight * pixelRatio);
+		if (totalHeightScaled % 2 !== tickHeight % 2) {
+			totalHeightScaled += 1;
+		}
+		const horzBorderScaled = this._data.separatorVisible ? Math.max(1, Math.floor(horzBorder * pixelRatio)) : 0;
+		const totalWidthScaled = Math.round(totalWidth * pixelRatio);
+		// tick overlaps scale border
+		const tickSizeScaled = Math.round(tickSize * pixelRatio);
+		const widthScaled = Math.ceil(width * pixelRatio);
+		const paddingInnerScaled = Math.ceil(paddingInner * pixelRatio);
+
+		let yMid = this._commonData.coordinate;
+		if (this._commonData.fixedCoordinate) {
+			yMid = this._commonData.fixedCoordinate;
+		}
+
+		yMid = Math.round(yMid * pixelRatio) - Math.floor(pixelRatio * 0.5);
+		const yTop = Math.floor(yMid + tickHeight / 2 - totalHeightScaled / 2);
+		const yBottom = yTop + totalHeightScaled;
+
+		const alignRight = align === 'right';
+
+		const xInside = alignRight ? widthScaled - horzBorderScaled : horzBorderScaled;
+		const rightScaled = widthScaled;
+
+		let xOutside = xInside;
+		let xTick: number;
+		let xText: number;
+
+		const radius = 2 * pixelRatio;
+
+		ctx.textAlign = alignRight ? 'right' : 'left';
+		ctx.textBaseline = 'middle';
+
+		if (alignRight) {
+			// 2               1
+			//
+			//              6  5
+			//
+			// 3               4
+			xOutside = xInside - totalWidthScaled;
+			xTick = xInside - tickSizeScaled;
+			xText = xInside - tickSizeScaled - paddingInnerScaled - 1;
+		} else {
+			// 1               2
+			//
+			// 6  5
+			//
+			// 4               3
+			xOutside = xInside + totalWidthScaled;
+			xTick = xInside + tickSizeScaled;
+			xText = xInside + tickSizeScaled + paddingInnerScaled;
+		}
+		return {
+			alignRight,
+			yTop,
+			yMid,
+			yBottom,
+			totalWidthScaled,
+			totalHeightScaled,
+			radius,
+			horzBorderScaled,
+			xOutside,
+			xInside,
+			xTick,
+			xText,
+			tickHeight,
+			rightScaled,
+			textMidCorrection,
+		};
 	}
 }

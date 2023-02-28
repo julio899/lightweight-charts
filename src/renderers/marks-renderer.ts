@@ -1,24 +1,25 @@
 import { SeriesItemsIndexesRange } from '../model/time-data';
 
-import { IPaneRenderer } from './ipane-renderer';
-import { LineItem } from './line-renderer';
+import { LineItemBase } from './line-renderer-base';
+import { ScaledRenderer } from './scaled-renderer';
 
 export interface MarksRendererData {
-	items: LineItem[];
+	items: LineItemBase[];
 	lineColor: string;
+	lineWidth: number;
 	backColor: string;
 	radius: number;
 	visibleRange: SeriesItemsIndexesRange | null;
 }
 
-export class PaneRendererMarks implements IPaneRenderer {
+export class PaneRendererMarks extends ScaledRenderer {
 	protected _data: MarksRendererData | null = null;
 
 	public setData(data: MarksRendererData): void {
 		this._data = data;
 	}
 
-	public draw(ctx: CanvasRenderingContext2D): void {
+	protected _drawImpl(ctx: CanvasRenderingContext2D): void {
 		if (this._data === null || this._data.visibleRange === null) {
 			return;
 		}
@@ -38,8 +39,10 @@ export class PaneRendererMarks implements IPaneRenderer {
 			ctx.fill();
 		};
 
-		ctx.fillStyle = data.backColor;
-		draw(data.radius + 2);
+		if (data.lineWidth > 0) {
+			ctx.fillStyle = data.backColor;
+			draw(data.radius + data.lineWidth);
+		}
 
 		ctx.fillStyle = data.lineColor;
 		draw(data.radius);

@@ -1,33 +1,19 @@
-import { ChartModel } from '../../model/chart-model';
+import { generateContrastColors } from '../../helpers/color';
+
 import { LastValueDataResultWithData, Series } from '../../model/series';
 import { PriceAxisLastValueMode } from '../../model/series-options';
 import { PriceAxisViewRendererCommonData, PriceAxisViewRendererData } from '../../renderers/iprice-axis-view-renderer';
 
 import { PriceAxisView } from './price-axis-view';
 
-export interface SeriesPriceAxisViewData {
-	model: ChartModel;
-}
-
 export class SeriesPriceAxisView extends PriceAxisView {
 	private readonly _source: Series;
-	private readonly _data: SeriesPriceAxisViewData;
 
-	public constructor(source: Series, data: SeriesPriceAxisViewData) {
+	public constructor(source: Series) {
 		super();
 		this._source = source;
-		this._data = data;
 	}
 
-	protected _getSource(): Series {
-		return this._source;
-	}
-
-	protected _getData(): SeriesPriceAxisViewData {
-		return this._data;
-	}
-
-	// tslint:disable-next-line:cyclomatic-complexity
 	protected _updateRendererData(
 		axisRendererData: PriceAxisViewRendererData,
 		paneRendererData: PriceAxisViewRendererData,
@@ -36,13 +22,19 @@ export class SeriesPriceAxisView extends PriceAxisView {
 		axisRendererData.visible = false;
 		paneRendererData.visible = false;
 
-		const seriesOptions = this._source.internalOptions();
+		const source = this._source;
+		if (!source.visible()) {
+			return;
+		}
+
+		const seriesOptions = source.options();
+
 		const showSeriesLastValue = seriesOptions.lastValueVisible;
 
-		const showSymbolLabel = this._source.title() !== '';
+		const showSymbolLabel = source.title() !== '';
 		const showPriceAndPercentage = seriesOptions.seriesLastValueMode === PriceAxisLastValueMode.LastPriceAndPercentageValue;
 
-		const lastValueData = this._source.lastValueData(undefined, false);
+		const lastValueData = source.lastValueData(false);
 		if (lastValueData.noData) {
 			return;
 		}
@@ -57,10 +49,16 @@ export class SeriesPriceAxisView extends PriceAxisView {
 			paneRendererData.visible = paneRendererData.text.length > 0;
 		}
 
-		commonRendererData.background = this._source.priceLineColor(lastValueData.color);
-		commonRendererData.color = this.generateTextColor(commonRendererData.background);
+		const lastValueColor = source.priceLineColor(lastValueData.color);
+		const colors = generateContrastColors(lastValueColor);
+
+		commonRendererData.background = colors.background;
+		commonRendererData.color = colors.foreground;
 		commonRendererData.coordinate = lastValueData.coordinate;
-		commonRendererData.floatCoordinate = lastValueData.floatCoordinate;
+		paneRendererData.borderColor = source.model().backgroundColorAtYPercentFromTop(lastValueData.coordinate / source.priceScale().height());
+		axisRendererData.borderColor = lastValueColor;
+		axisRendererData.color = commonRendererData.color;
+		paneRendererData.color = commonRendererData.color;
 	}
 
 	protected _paneText(

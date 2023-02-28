@@ -11,12 +11,13 @@ This tests uses [puppeteer](https://github.com/GoogleChrome/puppeteer) to genera
 
 ## Writing new test case
 
-1. Create new file in [test-cases](./test-cases) folder called `test-case-name.case.js` (`.case.js` ending is mandatory, `test-case-name` will be used as test case name).
+1. Create new file in [test-cases](./test-cases) folder called `test-case-name.js` (`test-case-name` will be used as test case name).
 
-1. Write your test case in that file (see [simple](./test-cases/simple.case.js) test case as example).
+1. Write your test case in that file.
 
     There is the only 1 requirement for your code - you need to define function called `runTestCase`, which takes a container as the first argument and creates there a widget.
-    _(the definition of that function is `function runTestCase(container: HTMLElement): void {}`)_
+    Also `runTestCase` might return a `Promise`. In this case the runner will wait for it before continue a test.
+    _(the definition of that function is `function runTestCase(container: HTMLElement): void | Promise<void> {}`)_
 
 Note that case's file wouldn't prepared/parsed by any bundler/processor (or even by NodeJS), so please pay attention, that you **CAN'T** require other modules in a test case.
 
@@ -31,7 +32,7 @@ To run this tests you need use [runner.js](./runner.js):
 ```
 
 Each path to the standalone module might be either to a local file (relative/absolute path to a file) or remote file (via http/https).
-If file is local then local server will be runner to serve that file (see [serve-local-files.js](./serve-local-files.js) module).
+If file is local then local server will be runner to serve that file (see [serve-local-files.js](../serve-local-files.js) module).
 
 ## Tips
 
@@ -45,3 +46,14 @@ If file is local then local server will be runner to serve that file (see [serve
     Let's say you run your tests in that way - `./runner.js ./golden/standalone/module.js ./test/standalone/module.js`.
     After that in `.gendata/test-case-name/1.golden.html` you can find a HTML page.
     To open this page properly you can run `./tests/e2e/serve-static-files.js golden.js:./golden/standalone/module.js test.js:./test/standalone/module.js` and then open that page in the browser to debug.
+
+1. The following environmental variables can be used to adjust the test:
+
+    - `PRODUCTION_BUILD`: Set to true if testing a Production build
+    - `DEVICE_PIXEL_RATIO`: Device pixel ratio to simulate during the test (number)
+
+1. You can set Mocha options from the command line arguments:
+
+```bash
+node ./tests/e2e/graphics/runner.js ./path/to/golden/standalone/module.js ./path/to/test/standalone/module.js --bail --grep "add-series"
+```

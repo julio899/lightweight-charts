@@ -1,206 +1,215 @@
-import { ChartWidget, MouseEventParamsImpl } from '../gui/chart-widget';
+import { ChartWidget, MouseEventParamsImpl, MouseEventParamsImplSupplier } from '../gui/chart-widget';
+import { PaneWidget } from '../gui/pane-widget';
 
-import { ensureDefined } from '../helpers/assertions';
+import { assert, ensureDefined } from '../helpers/assertions';
 import { Delegate } from '../helpers/delegate';
-import { clone, DeepPartial, merge } from '../helpers/strict-type-checks';
+import { clone, DeepPartial, isBoolean, merge } from '../helpers/strict-type-checks';
 
-import { ChartOptions } from '../model/chart-model';
-import { Palette } from '../model/palette';
+import { ChartOptions, ChartOptionsInternal } from '../model/chart-model';
 import { Series } from '../model/series';
+import { SeriesPlotRow } from '../model/series-data';
 import {
-	AreaSeriesOptions,
-	BarSeriesOptions,
-	CandleSeriesOptions,
-	fillUpDownCandlesColors,
-	HistogramSeriesOptions,
-	LineSeriesOptions,
+	AreaSeriesPartialOptions,
+	BarSeriesPartialOptions,
+	BaselineSeriesPartialOptions,
+	CandlestickSeriesPartialOptions,
+	fillUpDownCandlesticksColors,
+	HistogramSeriesPartialOptions,
+	LineSeriesPartialOptions,
 	precisionByMinMove,
 	PriceFormat,
-	SeriesOptionsInternal,
+	PriceFormatBuiltIn,
+	SeriesOptionsMap,
+	SeriesPartialOptionsMap,
+	SeriesStyleOptionsMap,
+	SeriesType,
 } from '../model/series-options';
-import { TimePointIndex } from '../model/time-data';
+import { Logical, Time } from '../model/time-data';
 
-import { AreaSeriesApi } from './area-series-api';
-import { BarSeriesApi } from './bar-series-api';
-import { CandleSeriesApi } from './candle-series-api';
-import { DataLayer, SeriesUpdatePacket, TimedData } from './data-layer';
-import { HistogramSeriesApi } from './histogram-series-api';
-import { IAreaSeriesApi } from './iarea-series-api';
-import { IBarSeriesApi } from './ibar-series-api';
-import { ICandleSeries } from './icandle-series-api';
-import { IChartApi, MouseEventHandler, MouseEventParams, TimeRangeChangeEventHandler } from './ichart-api';
-import { IHistogramSeriesApi } from './ihistogram-series-api';
-import { ILineSeriesApi } from './iline-series-api';
+import { DataUpdatesConsumer, isFulfilledData, SeriesDataItemTypeMap } from './data-consumer';
+import { DataLayer, DataUpdateResponse, SeriesChanges } from './data-layer';
+import { getSeriesDataCreator } from './get-series-data-creator';
+import { IChartApi, MouseEventHandler, MouseEventParams } from './ichart-api';
 import { IPriceScaleApi } from './iprice-scale-api';
 import { ISeriesApi } from './iseries-api';
-import { ITimeScaleApi, TimeRange } from './itime-scale-api';
-import { LineSeriesApi } from './line-series-api';
-import { seriesOptionsDefaults } from './options/series-options-defaults';
+import { ITimeScaleApi } from './itime-scale-api';
+import { chartOptionsDefaults } from './options/chart-options-defaults';
+import {
+	areaStyleDefaults,
+	barStyleDefaults,
+	baselineStyleDefaults,
+	candlestickStyleDefaults,
+	histogramStyleDefaults,
+	lineStyleDefaults,
+	seriesOptionsDefaults,
+} from './options/series-options-defaults';
 import { PriceScaleApi } from './price-scale-api';
-import { DataUpdatesConsumer, SeriesApiBase } from './series-api-base';
+import { SeriesApi } from './series-api';
 import { TimeScaleApi } from './time-scale-api';
 
 function patchPriceFormat(priceFormat?: DeepPartial<PriceFormat>): void {
-	if (priceFormat === undefined) {
+	if (priceFormat === undefined || priceFormat.type === 'custom') {
 		return;
 	}
-	if (priceFormat.minMove !== undefined && priceFormat.precision === undefined) {
-		priceFormat.precision = precisionByMinMove(priceFormat.minMove);
+	const priceFormatBuiltIn = priceFormat as DeepPartial<PriceFormatBuiltIn>;
+	if (priceFormatBuiltIn.minMove !== undefined && priceFormatBuiltIn.precision === undefined) {
+		priceFormatBuiltIn.precision = precisionByMinMove(priceFormatBuiltIn.minMove);
 	}
 }
 
-export class ChartApi implements IChartApi, DataUpdatesConsumer {
+function migrateHandleScaleScrollOptions(options: DeepPartial<ChartOptions>): void {
+	if (isBoolean(options.handleScale)) {
+		const handleScale = options.handleScale;
+		options.handleScale = {
+			axisDoubleClickReset: {
+				time: handleScale,
+				price: handleScale,
+			},
+			axisPressedMouseMove: {
+				time: handleScale,
+				price: handleScale,
+			},
+			mouseWheel: handleScale,
+			pinch: handleScale,
+		};
+	} else if (options.handleScale !== undefined) {
+		const { axisPressedMouseMove, axisDoubleClickReset } = options.handleScale;
+		if (isBoolean(axisPressedMouseMove)) {
+			options.handleScale.axisPressedMouseMove = {
+				time: axisPressedMouseMove,
+				price: axisPressedMouseMove,
+			};
+		}
+		if (isBoolean(axisDoubleClickReset)) {
+			options.handleScale.axisDoubleClickReset = {
+				time: axisDoubleClickReset,
+				price: axisDoubleClickReset,
+			};
+		}
+	}
+
+	const handleScroll = options.handleScroll;
+	if (isBoolean(handleScroll)) {
+		options.handleScroll = {
+			horzTouchDrag: handleScroll,
+			vertTouchDrag: handleScroll,
+			mouseWheel: handleScroll,
+			pressedMouseMove: handleScroll,
+		};
+	}
+}
+
+function toInternalOptions(options: DeepPartial<ChartOptions>): DeepPartial<ChartOptionsInternal> {
+	migrateHandleScaleScrollOptions(options);
+
+	return options as DeepPartial<ChartOptionsInternal>;
+}
+
+export type IPriceScaleApiProvider = Pick<IChartApi, 'priceScale'>;
+
+export class ChartApi implements IChartApi, DataUpdatesConsumer<SeriesType> {
 	private _chartWidget: ChartWidget;
 	private _dataLayer: DataLayer = new DataLayer();
-	private readonly _timeRangeChanged: Delegate<TimeRange | null> = new Delegate();
-	private readonly _seriesMap: Map<SeriesApiBase, Series> = new Map();
-	private readonly _seriesMapReversed: Map<Series, SeriesApiBase> = new Map();
+	private readonly _seriesMap: Map<SeriesApi<SeriesType>, Series> = new Map();
+	private readonly _seriesMapReversed: Map<Series, SeriesApi<SeriesType>> = new Map();
 
 	private readonly _clickedDelegate: Delegate<MouseEventParams> = new Delegate();
-	private readonly _crossHairMovedDelegate: Delegate<MouseEventParams> = new Delegate();
+	private readonly _crosshairMovedDelegate: Delegate<MouseEventParams> = new Delegate();
 
-	private readonly _priceScaleApi: PriceScaleApi;
 	private readonly _timeScaleApi: TimeScaleApi;
 
-	public constructor(container: HTMLElement, options: ChartOptions) {
-		this._chartWidget = new ChartWidget(container, options);
-		this._chartWidget.model().timeScale().visibleBarsChanged().subscribe(this._onVisibleBarsChanged.bind(this));
+	public constructor(container: HTMLElement, options?: DeepPartial<ChartOptions>) {
+		const internalOptions = (options === undefined) ?
+			clone(chartOptionsDefaults) :
+			merge(clone(chartOptionsDefaults), toInternalOptions(options)) as ChartOptionsInternal;
 
-		this._chartWidget.clicked().subscribe((param: MouseEventParamsImpl) => this._clickedDelegate.fire(this._convertMouseParams(param)), this);
-		this._chartWidget.crossHairMoved().subscribe((param: MouseEventParamsImpl) => this._crossHairMovedDelegate.fire(this._convertMouseParams(param)), this);
+		this._chartWidget = new ChartWidget(container, internalOptions);
+
+		this._chartWidget.clicked().subscribe(
+			(paramSupplier: MouseEventParamsImplSupplier) => {
+				if (this._clickedDelegate.hasListeners()) {
+					this._clickedDelegate.fire(this._convertMouseParams(paramSupplier()));
+				}
+			},
+			this
+		);
+		this._chartWidget.crosshairMoved().subscribe(
+			(paramSupplier: MouseEventParamsImplSupplier) => {
+				if (this._crosshairMovedDelegate.hasListeners()) {
+					this._crosshairMovedDelegate.fire(this._convertMouseParams(paramSupplier()));
+				}
+			},
+			this
+		);
 
 		const model = this._chartWidget.model();
-		this._priceScaleApi = new PriceScaleApi(model);
-		this._timeScaleApi = new TimeScaleApi(model);
+		this._timeScaleApi = new TimeScaleApi(model, this._chartWidget.timeAxisWidget());
 	}
 
 	public remove(): void {
-		this._chartWidget.model().timeScale().visibleBarsChanged().unsubscribeAll(this);
 		this._chartWidget.clicked().unsubscribeAll(this);
-		this._chartWidget.crossHairMoved().unsubscribeAll(this);
-		this._priceScaleApi.destroy();
+		this._chartWidget.crosshairMoved().unsubscribeAll(this);
+
 		this._timeScaleApi.destroy();
 		this._chartWidget.destroy();
-		delete this._chartWidget;
-		this._seriesMap.forEach((series: Series, api: SeriesApiBase) => {
-			api.destroy();
-		});
+
 		this._seriesMap.clear();
 		this._seriesMapReversed.clear();
-		this._timeRangeChanged.destroy();
+
 		this._clickedDelegate.destroy();
-		this._crossHairMovedDelegate.destroy();
+		this._crosshairMovedDelegate.destroy();
 		this._dataLayer.destroy();
-		delete this._dataLayer;
 	}
 
-	public resize(height: number, width: number, forceRepaint?: boolean): void {
-		this._chartWidget.resize(height, width, forceRepaint);
+	public resize(width: number, height: number, forceRepaint?: boolean): void {
+		this._chartWidget.resize(width, height, forceRepaint);
 	}
 
-	public addAreaSeries(areaParams?: DeepPartial<AreaSeriesOptions>): IAreaSeriesApi {
-		areaParams = areaParams || {};
-		const model = this._chartWidget.model();
-		patchPriceFormat(areaParams.priceFormat);
-		const options = merge(clone(seriesOptionsDefaults), areaParams, true) as SeriesOptionsInternal;
-		merge(options.areaStyle, areaParams, true);
-		const series = model.createSeries('Area', options, Boolean(areaParams.overlay), areaParams.title, areaParams.scaleMargins);
-		const res = new AreaSeriesApi(series, this);
-		this._seriesMap.set(res, series);
-		this._seriesMapReversed.set(series, res);
-		return res;
+	public addAreaSeries(options?: AreaSeriesPartialOptions): ISeriesApi<'Area'> {
+		return this._addSeriesImpl('Area', areaStyleDefaults, options);
 	}
 
-	public addBarSeries(barParams?: DeepPartial<BarSeriesOptions>): IBarSeriesApi {
-		barParams = barParams || {};
-		const model = this._chartWidget.model();
-		patchPriceFormat(barParams.priceFormat);
-		const options = merge(clone(seriesOptionsDefaults), barParams, true) as SeriesOptionsInternal;
-		merge(options.barStyle, barParams, true);
-		const series = model.createSeries('Bar', options, Boolean(barParams.overlay), barParams.title, barParams.scaleMargins);
-		const res = new BarSeriesApi(series, this);
-		this._seriesMap.set(res, series);
-		this._seriesMapReversed.set(series, res);
-		return res;
+	public addBaselineSeries(options?: BaselineSeriesPartialOptions): ISeriesApi<'Baseline'> {
+		return this._addSeriesImpl('Baseline', baselineStyleDefaults, options);
 	}
 
-	public addCandleSeries(candleParams?: DeepPartial<CandleSeriesOptions>): ICandleSeries {
-		candleParams = candleParams || {};
-		const model = this._chartWidget.model();
-		fillUpDownCandlesColors(candleParams);
-		patchPriceFormat(candleParams.priceFormat);
-		const options = merge(clone(seriesOptionsDefaults), candleParams, true) as SeriesOptionsInternal;
-		merge(options.candleStyle, candleParams, true);
-		const series = model.createSeries('Candle', options, Boolean(candleParams.overlay), candleParams.title, candleParams.scaleMargins);
-		const res = new CandleSeriesApi(series, this);
-		this._seriesMap.set(res, series);
-		this._seriesMapReversed.set(series, res);
-		return res;
+	public addBarSeries(options?: BarSeriesPartialOptions): ISeriesApi<'Bar'> {
+		return this._addSeriesImpl('Bar', barStyleDefaults, options);
 	}
 
-	public addHistogramSeries(histogramParams?: DeepPartial<HistogramSeriesOptions>): IHistogramSeriesApi {
-		histogramParams = histogramParams || {};
-		const model = this._chartWidget.model();
-		patchPriceFormat(histogramParams.priceFormat);
-		const options = merge(clone(seriesOptionsDefaults), histogramParams, true) as SeriesOptionsInternal;
-		merge(options.histogramStyle, histogramParams, true);
-		const series = model.createSeries('Histogram', options, Boolean(histogramParams.overlay), histogramParams.title, histogramParams.scaleMargins);
-		const res = new HistogramSeriesApi(series, this);
-		this._seriesMap.set(res, series);
-		this._seriesMapReversed.set(series, res);
-		return res;
+	public addCandlestickSeries(options: CandlestickSeriesPartialOptions = {}): ISeriesApi<'Candlestick'> {
+		fillUpDownCandlesticksColors(options);
+
+		return this._addSeriesImpl('Candlestick', candlestickStyleDefaults, options);
 	}
 
-	public addLineSeries(lineParams?: DeepPartial<LineSeriesOptions>): ILineSeriesApi {
-		lineParams = lineParams || {};
-		const model = this._chartWidget.model();
-		patchPriceFormat(lineParams.priceFormat);
-		const options = merge(clone(seriesOptionsDefaults), lineParams, true) as SeriesOptionsInternal;
-		merge(options.lineStyle, lineParams, true);
-		const series = model.createSeries('Line', options, Boolean(lineParams.overlay), lineParams.title, lineParams.scaleMargins);
-		const res = new LineSeriesApi(series, this);
-		this._seriesMap.set(res, series);
-		this._seriesMapReversed.set(series, res);
-		return res;
+	public addHistogramSeries(options?: HistogramSeriesPartialOptions): ISeriesApi<'Histogram'> {
+		return this._addSeriesImpl('Histogram', histogramStyleDefaults, options);
 	}
 
-	public removeSeries(seriesApi: ISeriesApi): void {
-		const seriesObj = seriesApi as SeriesApiBase;
-		const series = ensureDefined(this._seriesMap.get(seriesObj));
+	public addLineSeries(options?: LineSeriesPartialOptions): ISeriesApi<'Line'> {
+		return this._addSeriesImpl('Line', lineStyleDefaults, options);
+	}
+
+	public removeSeries(seriesApi: SeriesApi<SeriesType>): void {
+		const series = ensureDefined(this._seriesMap.get(seriesApi));
 
 		const update = this._dataLayer.removeSeries(series);
 		const model = this._chartWidget.model();
 		model.removeSeries(series);
-		const timeScaleUpdate = update.timeScaleUpdate;
-		model.updateTimeScale(timeScaleUpdate.index, timeScaleUpdate.changes, timeScaleUpdate.marks, true);
-		timeScaleUpdate.seriesUpdates.forEach((value: SeriesUpdatePacket, key: Series) => {
-			key.setData(value.update, false);
-		});
-		model.updateTimeScaleBaseIndex(0 as TimePointIndex);
-		this._seriesMap.delete(seriesObj);
+
+		this._sendUpdateToChart(update);
+
+		this._seriesMap.delete(seriesApi);
 		this._seriesMapReversed.delete(series);
 	}
 
-	public applyNewData(series: Series, data: TimedData[], palette?: Palette): void {
-		const update = this._dataLayer.setSeriesData(series, data, palette);
-		const model = this._chartWidget.model();
-		const timeScaleUpdate = update.timeScaleUpdate;
-		model.updateTimeScale(timeScaleUpdate.index, timeScaleUpdate.changes, timeScaleUpdate.marks, true);
-		timeScaleUpdate.seriesUpdates.forEach((value: SeriesUpdatePacket, key: Series) => {
-			key.setData(value.update, series === key, palette);
-		});
-		model.updateTimeScaleBaseIndex(0 as TimePointIndex);
+	public applyNewData<TSeriesType extends SeriesType>(series: Series<TSeriesType>, data: SeriesDataItemTypeMap[TSeriesType][]): void {
+		this._sendUpdateToChart(this._dataLayer.setSeriesData(series, data));
 	}
 
-	public updateData(series: Series, data: TimedData, palette?: Palette): void {
-		const update = this._dataLayer.updateSeriesData(series, data, palette);
-		const model = this._chartWidget.model();
-		const timeScaleUpdate = update.timeScaleUpdate;
-		model.updateTimeScale(timeScaleUpdate.index, timeScaleUpdate.changes, timeScaleUpdate.marks, false);
-		timeScaleUpdate.seriesUpdates.forEach((value: SeriesUpdatePacket, key: Series) => {
-			key.updateData(value.update);
-		});
-		model.updateTimeScaleBaseIndex(0 as TimePointIndex);
+	public updateData<TSeriesType extends SeriesType>(series: Series<TSeriesType>, data: SeriesDataItemTypeMap[TSeriesType]): void {
+		this._sendUpdateToChart(this._dataLayer.updateSeriesData(series, data));
 	}
 
 	public subscribeClick(handler: MouseEventHandler): void {
@@ -211,26 +220,20 @@ export class ChartApi implements IChartApi, DataUpdatesConsumer {
 		this._clickedDelegate.unsubscribe(handler);
 	}
 
-	public subscribeCrossHairMove(handler: MouseEventHandler): void {
-		this._crossHairMovedDelegate.subscribe(handler);
+	public subscribeCrosshairMove(handler: MouseEventHandler): void {
+		this._crosshairMovedDelegate.subscribe(handler);
 	}
 
-	public unsubscribeCrossHairMove(handler: MouseEventHandler): void {
-		this._crossHairMovedDelegate.unsubscribe(handler);
+	public unsubscribeCrosshairMove(handler: MouseEventHandler): void {
+		this._crosshairMovedDelegate.unsubscribe(handler);
 	}
 
-	public subscribeVisibleTimeRangeChange(handler: TimeRangeChangeEventHandler): void {
-		this._timeRangeChanged.subscribe(handler);
+	public setCrossHair(x: number, y: number, visible: boolean): void {
+		this._chartWidget.paneWidgets()[0].setCrossHair(x, y, visible);
 	}
 
-	public unsubscribeVisibleTimeRangeChange(handler: TimeRangeChangeEventHandler): void {
-		this._timeRangeChanged.unsubscribe(handler);
-	}
-
-	// TODO: add more subscriptions
-
-	public priceScale(): IPriceScaleApi {
-		return this._priceScaleApi;
+	public priceScale(priceScaleId: string): IPriceScaleApi {
+		return new PriceScaleApi(this._chartWidget, priceScaleId);
 	}
 
 	public timeScale(): ITimeScaleApi {
@@ -238,36 +241,77 @@ export class ChartApi implements IChartApi, DataUpdatesConsumer {
 	}
 
 	public applyOptions(options: DeepPartial<ChartOptions>): void {
-		this._chartWidget.applyOptions(options);
+		this._chartWidget.applyOptions(toInternalOptions(options));
 	}
 
-	public options(): ChartOptions {
-		return this._chartWidget.options();
+	public options(): Readonly<ChartOptions> {
+		return this._chartWidget.options() as Readonly<ChartOptions>;
 	}
 
-	public disableBranding(): void {
-		this._chartWidget.disableBranding();
+	public takeScreenshot(): HTMLCanvasElement {
+		return this._chartWidget.takeScreenshot();
 	}
 
-	private _onVisibleBarsChanged(): void {
-		if (this._timeRangeChanged.hasListeners()) {
-			this._timeRangeChanged.fire(this.timeScale().getVisibleRange());
-		}
+	public removePane(index: number): void {
+		this._chartWidget.model().removePane(index);
 	}
 
-	private _mapSeriesToApi(series: Series): ISeriesApi {
+	public swapPane(first: number, second: number): void {
+		this._chartWidget.model().swapPane(first, second);
+	}
+
+	public getPaneElements(): HTMLElement[] {
+		return this._chartWidget.paneWidgets().map((paneWidget: PaneWidget) => paneWidget.getPaneCell());
+	}
+
+	private _addSeriesImpl<TSeries extends SeriesType>(
+		type: TSeries,
+		styleDefaults: SeriesStyleOptionsMap[TSeries],
+		options: SeriesPartialOptionsMap[TSeries] = {}
+	): ISeriesApi<TSeries> {
+		patchPriceFormat(options.priceFormat);
+
+		const strictOptions = merge(clone(seriesOptionsDefaults), clone(styleDefaults), options) as SeriesOptionsMap[TSeries];
+		const series = this._chartWidget.model().createSeries(type, strictOptions);
+
+		const res = new SeriesApi<TSeries>(series, this, this);
+		this._seriesMap.set(res, series);
+		this._seriesMapReversed.set(series, res);
+
+		return res;
+	}
+
+	private _sendUpdateToChart(update: DataUpdateResponse): void {
+		const model = this._chartWidget.model();
+
+		model.updateTimeScale(update.timeScale.baseIndex, update.timeScale.points, update.timeScale.firstChangedPointIndex);
+		update.series.forEach((value: SeriesChanges, series: Series) => series.setData(value.data, value.info));
+
+		model.recalculateAllPanes();
+	}
+
+	private _mapSeriesToApi(series: Series): ISeriesApi<SeriesType> {
 		return ensureDefined(this._seriesMapReversed.get(series));
 	}
 
 	private _convertMouseParams(param: MouseEventParamsImpl): MouseEventParams {
-		const seriesPrices = new Map<ISeriesApi, number>();
-		param.seriesPrices.forEach((price: number, series: Series) => {
-			seriesPrices.set(this._mapSeriesToApi(series), price);
+		const seriesData: MouseEventParams['seriesData'] = new Map();
+		param.seriesData.forEach((plotRow: SeriesPlotRow, series: Series) => {
+			const data = getSeriesDataCreator(series.seriesType())(plotRow);
+			assert(isFulfilledData(data));
+			seriesData.set(this._mapSeriesToApi(series), data);
 		});
+
+		const hoveredSeries = param.hoveredSeries === undefined ? undefined : this._mapSeriesToApi(param.hoveredSeries);
+
 		return {
-			time: param.time && (param.time.businessDay || param.time.timestamp),
+			time: param.time as Time | undefined,
+			logical: param.index as Logical | undefined,
 			point: param.point,
-			seriesPrices,
+			paneIndex: param.paneIndex,
+			hoveredSeries,
+			hoveredMarkerId: param.hoveredObject,
+			seriesData,
 		};
 	}
 }

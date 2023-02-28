@@ -11,7 +11,7 @@ export interface TestCase {
 const testCasesDir = path.join(__dirname, '..', 'test-cases');
 
 function extractTestCaseName(fileName: string): string | null {
-	const match = fileName.match(/^(.+)\.case\.js$/);
+	const match = /^([^.].+)\.js$/.exec(fileName);
 	return match && match[1];
 }
 
@@ -22,7 +22,7 @@ function isTestCaseFile(filePath: string): boolean {
 export function getTestCases(): TestCase[] {
 	return fs.readdirSync(testCasesDir)
 		.filter(isTestCaseFile)
-		.map((testCaseFile: string) => ({
+		.map<TestCase>((testCaseFile: string) => ({
 			name: extractTestCaseName(testCaseFile) as string,
 			caseContent: fs.readFileSync(path.join(testCasesDir, testCaseFile), { encoding: 'utf-8' }),
 		}));

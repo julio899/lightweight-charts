@@ -1,17 +1,20 @@
-// NOTE: this type definition file is incomplete. Feel free to define other entities from companion JS
+import { IPriceFormatter } from '../formatters/iprice-formatter';
 
-import { IFormatter } from '../formatters/iformatter';
-
+import { AutoscaleInfoImpl } from './autoscale-info-impl';
 import { ChartModel } from './chart-model';
 import { IDataSource } from './idata-source';
-import { PriceRange } from './price-range';
-import { TimePointIndex } from './time-data';
+import { TimePoint, TimePointIndex } from './time-data';
+
+export interface FirstValue {
+	value: number;
+	timePoint: TimePoint;
+}
 
 export interface IPriceDataSource extends IDataSource {
-	firstValue(): number | null;
-	formatter(): IFormatter;
+	firstValue(): FirstValue | null;
+	formatter(): IPriceFormatter;
 	priceLineColor(lastBarColor: string): string;
 	model(): ChartModel;
-	base(): number;
-	priceRange(startTimePoint: TimePointIndex, endTimePoint: TimePointIndex): PriceRange | null;
+	minMove(): number;
+	autoscaleInfo(startTimePoint: TimePointIndex, endTimePoint: TimePointIndex): AutoscaleInfoImpl | null;
 }

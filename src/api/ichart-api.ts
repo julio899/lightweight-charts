@@ -2,35 +2,71 @@ import { DeepPartial } from '../helpers/strict-type-checks';
 
 import { ChartOptions } from '../model/chart-model';
 import { Point } from '../model/point';
+import { SeriesMarker } from '../model/series-markers';
 import {
-	AreaSeriesOptions,
-	BarSeriesOptions,
-	CandleSeriesOptions,
-	HistogramSeriesOptions,
-	LineSeriesOptions,
+	AreaSeriesPartialOptions,
+	BarSeriesPartialOptions,
+	BaselineSeriesPartialOptions,
+	CandlestickSeriesPartialOptions,
+	HistogramSeriesPartialOptions,
+	LineSeriesPartialOptions,
+	SeriesType,
 } from '../model/series-options';
-import { BusinessDay, UTCTimestamp } from '../model/time-data';
+import { Logical, Time } from '../model/time-data';
 
-import { IAreaSeriesApi } from './iarea-series-api';
-import { IBarSeriesApi } from './ibar-series-api';
-import { ICandleSeries } from './icandle-series-api';
-import { IHistogramSeriesApi } from './ihistogram-series-api';
-import { ILineSeriesApi } from './iline-series-api';
+import { BarData, HistogramData, LineData } from './data-consumer';
 import { IPriceScaleApi } from './iprice-scale-api';
 import { ISeriesApi } from './iseries-api';
-import { ITimeScaleApi, TimeRange } from './itime-scale-api';
+import { ITimeScaleApi } from './itime-scale-api';
 
+/**
+ * Represents a mouse event.
+ */
 export interface MouseEventParams {
-	time?: UTCTimestamp | BusinessDay;
+	/**
+	 * Time of the data at the location of the mouse event.
+	 *
+	 * The value will be `undefined` if the location of the event in the chart is outside the range of available data.
+	 */
+	time?: Time;
+	/**
+	 * Logical index
+	 */
+	logical?: Logical;
+	/**
+	 * Location of the event in the chart.
+	 *
+	 * The value will be `undefined` if the event is fired outside the chart, for example a mouse leave event.
+	 */
 	point?: Point;
-	seriesPrices: Map<ISeriesApi, number>;
+	/**
+	 * The index of the Pane
+	 */
+	paneIndex?: number;
+	/**
+	 * Data of all series at the location of the event in the chart.
+	 *
+	 * Keys of the map are {@link ISeriesApi} instances. Values are prices.
+	 * Values of the map are original data items
+	 */
+	seriesData: Map<ISeriesApi<SeriesType>, BarData | LineData | HistogramData>;
+	/**
+	 * The {@link ISeriesApi} for the series at the point of the mouse event.
+	 */
+	hoveredSeries?: ISeriesApi<SeriesType>;
+	/**
+	 * The ID of the marker at the point of the mouse event.
+	 */
+	hoveredMarkerId?: SeriesMarker<Time>['id'];
 }
 
+/**
+ * A custom function use to handle mouse events.
+ */
 export type MouseEventHandler = (param: MouseEventParams) => void;
-export type TimeRangeChangeEventHandler = (timeRange: TimeRange | null) => void;
 
- /*
- * The main interface of a single chart
+/**
+ * The main interface of a single chart.
  */
 export interface IChartApi {
 	/**
@@ -39,116 +75,215 @@ export interface IChartApi {
 	remove(): void;
 
 	/**
-	 * Sets fixed size of the chart. By default chart takes 100% of its container
-	 * @param height - target heght of the chart
-	 * @param width - target width of the chart
-	 * @param [forceRepaint=false] - true to initiate resize immediately. One could need this to get screenshot immediately after resize
+	 * Sets fixed size of the chart. By default chart takes up 100% of its container.
+	 *
+	 * @param width - Target width of the chart.
+	 * @param height - Target height of the chart.
+	 * @param forceRepaint - True to initiate resize immediately. One could need this to get screenshot immediately after resize.
 	 */
-	resize(height: number, width: number, forceRepaint?: boolean): void;
+	resize(width: number, height: number, forceRepaint?: boolean): void;
 
 	/**
-	 * Creates an area series with specified parameters
-	 * @param [areaParams = undefined] - customization parameters of the series being created
-	 * @return an interface of the created series
+	 * Creates an area series with specified parameters.
+	 *
+	 * @param areaOptions - Customization parameters of the series being created.
+	 * @returns An interface of the created series.
+	 * @example
+	 * ```js
+	 * const series = chart.addAreaSeries();
+	 * ```
 	 */
-	addAreaSeries(areaParams?: DeepPartial<AreaSeriesOptions>): IAreaSeriesApi;
+	addAreaSeries(areaOptions?: AreaSeriesPartialOptions): ISeriesApi<'Area'>;
 
 	/**
-	 * Creates a bars series with specified parameters
-	 * @param [barParams = undefined] - customization parameters of the series being created
-	 * @return an interface of the created series
+	 * Creates a baseline series with specified parameters.
+	 *
+	 * @param baselineOptions - Customization parameters of the series being created.
+	 * @returns An interface of the created series.
+	 * @example
+	 * ```js
+	 * const series = chart.addBaselineSeries();
+	 * ```
 	 */
-	addBarSeries(barParams?: DeepPartial<BarSeriesOptions>): IBarSeriesApi;
+	addBaselineSeries(baselineOptions?: BaselineSeriesPartialOptions): ISeriesApi<'Baseline'>;
 
 	/**
-	 * Creates a candle series with specified parameters
-	 * @param [candleParams = undefined] - customization parameters of the series being created
-	 * @return an interface of the created series
+	 * Creates a bar series with specified parameters.
+	 *
+	 * @param barOptions - Customization parameters of the series being created.
+	 * @returns An interface of the created series.
+	 * @example
+	 * ```js
+	 * const series = chart.addBarSeries();
+	 * ```
 	 */
-	addCandleSeries(candleParams?: DeepPartial<CandleSeriesOptions>): ICandleSeries;
+	addBarSeries(barOptions?: BarSeriesPartialOptions): ISeriesApi<'Bar'>;
 
 	/**
-	 * Creates a histogram series with specified parameters
-	 * @param [histogramParams=undefined] - customization parameters of the series being created
-	 * @return an interface of the created series
+	 * Creates a candlestick series with specified parameters.
+	 *
+	 * @param candlestickOptions - Customization parameters of the series being created.
+	 * @returns An interface of the created series.
+	 * @example
+	 * ```js
+	 * const series = chart.addCandlestickSeries();
+	 * ```
 	 */
-	addHistogramSeries(histogramParams?: DeepPartial<HistogramSeriesOptions>): IHistogramSeriesApi;
+	addCandlestickSeries(candlestickOptions?: CandlestickSeriesPartialOptions): ISeriesApi<'Candlestick'>;
 
 	/**
-	 * Creates a line series with specified parameters
-	 * @param [lineParams=undefined] - customization parameters of the series being created
-	 * @return an interface of the created series
+	 * Creates a histogram series with specified parameters.
+	 *
+	 * @param histogramOptions - Customization parameters of the series being created.
+	 * @returns An interface of the created series.
+	 * @example
+	 * ```js
+	 * const series = chart.addHistogramSeries();
+	 * ```
 	 */
-	addLineSeries(lineParams?: DeepPartial<LineSeriesOptions>): ILineSeriesApi;
+	addHistogramSeries(histogramOptions?: HistogramSeriesPartialOptions): ISeriesApi<'Histogram'>;
 
 	/**
-	 * Removes a series of any type. This is an irreversible operation, you cannot do anything with the series after removing it
+	 * Creates a line series with specified parameters.
+	 *
+	 * @param lineOptions - Customization parameters of the series being created.
+	 * @returns An interface of the created series.
+	 * @example
+	 * ```js
+	 * const series = chart.addLineSeries();
+	 * ```
 	 */
-	removeSeries(seriesApi: ISeriesApi): void;
+	addLineSeries(lineOptions?: LineSeriesPartialOptions): ISeriesApi<'Line'>;
 
-	/*
-	 * Adds a subscription to mouse click event
-	 * @param handler - handler (funtion) to be called on mouse click
+	/**
+	 * Removes a series of any type. This is an irreversible operation, you cannot do anything with the series after removing it.
+	 *
+	 * @example
+	 * ```js
+	 * chart.removeSeries(series);
+	 * ```
+	 */
+	removeSeries(seriesApi: ISeriesApi<SeriesType>): void;
+
+	/**
+	 * Subscribe to the chart click event.
+	 *
+	 * @param handler - Handler to be called on mouse click.
+	 * @example
+	 * ```js
+	 * function myClickHandler(param) {
+	 *     if (!param.point) {
+	 *         return;
+	 *     }
+	 *
+	 *     console.log(`Click at ${param.point.x}, ${param.point.y}. The time is ${param.time}.`);
+	 * }
+	 *
+	 * chart.subscribeClick(myClickHandler);
+	 * ```
 	 */
 	subscribeClick(handler: MouseEventHandler): void;
 
 	/**
-	 * Removes mouse click subscription
-	 * @param handler - previously subscribed handler
+	 * Unsubscribe a handler that was previously subscribed using {@link subscribeClick}.
+	 *
+	 * @param handler - Previously subscribed handler
+	 * @example
+	 * ```js
+	 * chart.unsubscribeClick(myClickHandler);
+	 * ```
 	 */
 	unsubscribeClick(handler: MouseEventHandler): void;
 
 	/**
-	 * Adds a subscription to crosshair movement to receive notifications aboute cross hair moving
-	 * @param handler - handler (function) to be called on cross hair move
+	 * Subscribe to the crosshair move event.
+	 *
+	 * @param handler - Handler to be called on crosshair move.
+	 * @example
+	 * ```js
+	 * function myCrosshairMoveHandler(param) {
+	 *     if (!param.point) {
+	 *         return;
+	 *     }
+	 *
+	 *     console.log(`Crosshair moved to ${param.point.x}, ${param.point.y}. The time is ${param.time}.`);
+	 * }
+	 *
+	 * chart.subscribeCrosshairMove(myCrosshairMoveHandler);
+	 * ```
 	 */
-	subscribeCrossHairMove(handler: MouseEventHandler): void;
+	subscribeCrosshairMove(handler: MouseEventHandler): void;
 
 	/**
-	 * Removes a subscription on crosshair movement
-	 * @param handler - previously subscribed handler
+	 * Unsubscribe a handler that was previously subscribed using {@link subscribeCrosshairMove}.
+	 *
+	 * @param handler - Previously subscribed handler
+	 * @example
+	 * ```js
+	 * chart.unsubscribeCrosshairMove(myCrosshairMoveHandler);
+	 * ```
 	 */
-	unsubscribeCrossHairMove(handler: MouseEventHandler): void;
+	unsubscribeCrosshairMove(handler: MouseEventHandler): void;
 
 	/**
-	 * Adds a subscription to visible range changes to receive notification about visible range of data changes
-	 * @param handler - handler (function) to be called on changing visible data range
+	 * Move the crosshair to the specified position.
+	 *
+	 * @param x - horizontal pixel coordinate
+	 * @param y - vertical pixel coordinate
+	 * @param visible - true for the crosshair to be visible, false for invisible
 	 */
-	subscribeVisibleTimeRangeChange(handler: TimeRangeChangeEventHandler): void;
+	setCrossHair(x: number, y: number, visible: boolean): void;
 
 	/**
-	 * Removes a subscription to visible range changes
-	 * @param handler - previously subscribed handler
+	 * Returns API to manipulate a price scale.
+	 *
+	 * @param priceScaleId - ID of the price scale.
+	 * @returns Price scale API.
 	 */
-	unsubscribeVisibleTimeRangeChange(handler: TimeRangeChangeEventHandler): void;
-
-	/**
-	 * Returns API to manipulate the price scale
-	 * @returns - target API
-	 */
-	priceScale(): IPriceScaleApi;
+	priceScale(priceScaleId: string): IPriceScaleApi;
 
 	/**
 	 * Returns API to manipulate the time scale
-	 * @return - target API
+	 *
+	 * @returns Target API
 	 */
 	timeScale(): ITimeScaleApi;
 
 	/**
 	 * Applies new options to the chart
-	 * @param - options, any subset of chart options
+	 *
+	 * @param options - Any subset of options.
 	 */
 	applyOptions(options: DeepPartial<ChartOptions>): void;
 
 	/**
 	 * Returns currently applied options
-	 * @return - full set of currently applied options, including defautls
+	 *
+	 * @returns Full set of currently applied options, including defaults
 	 */
-	options(): ChartOptions;
+	options(): Readonly<ChartOptions>;
 
 	/**
-	 * Removes branding text from the chart.
-	 * Please read the description of this method in the documentation to learn more about the conditions for remove the branding.
+	 * Make a screenshot of the chart with all the elements excluding crosshair.
+	 *
+	 * @returns A canvas with the chart drawn on. Any `Canvas` methods like `toDataURL()` or `toBlob()` can be used to serialize the result.
 	 */
-	disableBranding(): void;
+	takeScreenshot(): HTMLCanvasElement;
+
+	/**
+	 * Removes a pane with index
+	 *
+	 * @param index - the pane to be removed
+	 */
+	removePane(index: number): void;
+
+	/**
+	 * swap the position of two panes.
+	 *
+	 * @param first - the first index
+	 * @param second - the second index
+	 */
+	swapPane(first: number, second: number): void;
+
+	getPaneElements(): HTMLElement[];
 }

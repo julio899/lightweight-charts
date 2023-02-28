@@ -2,14 +2,15 @@ import { Callback, ISubscription } from './isubscription';
 
 interface Listener<T1, T2> {
 	callback: Callback<T1, T2>;
-	linkedObject?: object;
+	linkedObject?: unknown;
 	singleshot: boolean;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 export class Delegate<T1 = void, T2 = void> implements ISubscription<T1, T2> {
 	private _listeners: Listener<T1, T2>[] = [];
 
-	public subscribe(callback: Callback<T1, T2>, linkedObject?: object, singleshot?: boolean): void {
+	public subscribe(callback: Callback<T1, T2>, linkedObject?: unknown, singleshot?: boolean): void {
 		const listener: Listener<T1, T2> = {
 			callback,
 			linkedObject,
@@ -25,8 +26,8 @@ export class Delegate<T1 = void, T2 = void> implements ISubscription<T1, T2> {
 		}
 	}
 
-	public unsubscribeAll(linkedObject: object): void {
-		this._listeners = this._listeners.filter((listener: Listener<T1, T2>) => listener.linkedObject === linkedObject);
+	public unsubscribeAll(linkedObject: unknown): void {
+		this._listeners = this._listeners.filter((listener: Listener<T1, T2>) => listener.linkedObject !== linkedObject);
 	}
 
 	public fire(param1: T1, param2: T2): void {

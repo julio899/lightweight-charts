@@ -1,32 +1,64 @@
-import { ChartOptions } from '../../model/chart-model';
+import { isRunningOnClientSide } from '../../helpers/is-running-on-client-side';
 
-import { crossHairOptionsDefaults } from './cross-hair-options-defaults';
+import { ChartOptionsInternal, TrackingModeExitMode } from '../../model/chart-model';
+
+import { crosshairOptionsDefaults } from './crosshair-options-defaults';
 import { gridOptionsDefaults } from './grid-options-defaults';
 import { layoutOptionsDefaults } from './layout-options-defaults';
 import { priceScaleOptionsDefaults } from './price-scale-options-defaults';
 import { timeScaleOptionsDefaults } from './time-scale-options-defaults';
 import { watermarkOptionsDefaults } from './watermark-options-defaults';
 
-export const chartOptionsDefaults: ChartOptions = {
+export const chartOptionsDefaults: ChartOptionsInternal = {
 	width: 0,
 	height: 0,
 	layout: layoutOptionsDefaults,
-	crossHair: crossHairOptionsDefaults,
+	crosshair: crosshairOptionsDefaults,
 	grid: gridOptionsDefaults,
-	priceScale: priceScaleOptionsDefaults,
+	overlayPriceScales: {
+		...priceScaleOptionsDefaults,
+	},
+	leftPriceScale: {
+		...priceScaleOptionsDefaults,
+		visible: false,
+	},
+	rightPriceScale: {
+		...priceScaleOptionsDefaults,
+		visible: true,
+	},
+	nonPrimaryPriceScale: {
+		...priceScaleOptionsDefaults,
+		visible: true,
+	},
 	timeScale: timeScaleOptionsDefaults,
 	watermark: watermarkOptionsDefaults,
 	localization: {
-		locale: navigator.language,
+		locale: isRunningOnClientSide ? navigator.language : '',
 		dateFormat: 'dd MMM \'yy',
 	},
 	handleScroll: {
 		mouseWheel: true,
 		pressedMouseMove: true,
+		horzTouchDrag: true,
+		vertTouchDrag: true,
 	},
 	handleScale: {
-		axisPressedMouseMove: true,
+		axisPressedMouseMove: {
+			time: true,
+			price: true,
+		},
+		axisDoubleClickReset: {
+			time: true,
+			price: true,
+		},
 		mouseWheel: true,
 		pinch: true,
+	},
+	kineticScroll: {
+		mouse: false,
+		touch: true,
+	},
+	trackingMode: {
+		exitMode: TrackingModeExitMode.OnNextTap,
 	},
 };

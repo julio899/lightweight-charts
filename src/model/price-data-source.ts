@@ -1,9 +1,9 @@
-import { IFormatter } from '../formatters/iformatter';
+import { IPriceFormatter } from '../formatters/iprice-formatter';
 
+import { AutoscaleInfoImpl } from './autoscale-info-impl';
 import { ChartModel } from './chart-model';
 import { DataSource } from './data-source';
-import { IPriceDataSource } from './iprice-data-source';
-import { PriceRange } from './price-range';
+import { FirstValue, IPriceDataSource } from './iprice-data-source';
 import { TimePointIndex } from './time-data';
 
 export abstract class PriceDataSource extends DataSource implements IPriceDataSource {
@@ -18,15 +18,11 @@ export abstract class PriceDataSource extends DataSource implements IPriceDataSo
 		return this._model;
 	}
 
-	public base(): number {
-		return 0;
-	}
+	public abstract minMove(): number;
 
-	public priceRange(startTimePoint: TimePointIndex, endTimePoint: TimePointIndex): PriceRange | null {
-		return null;
-	}
+	public abstract autoscaleInfo(startTimePoint: TimePointIndex, endTimePoint: TimePointIndex): AutoscaleInfoImpl | null;
 
-	public abstract firstValue(): number | null;
-	public abstract formatter(): IFormatter;
+	public abstract firstValue(): FirstValue | null;
+	public abstract formatter(): IPriceFormatter;
 	public abstract priceLineColor(lastBarColor: string): string;
 }

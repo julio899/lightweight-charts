@@ -1,4 +1,4 @@
-import { IPaneRenderer } from './ipane-renderer';
+import { ScaledRenderer } from './scaled-renderer';
 
 export interface WatermarkRendererLineData {
 	text: string;
@@ -8,7 +8,13 @@ export interface WatermarkRendererLineData {
 	zoom: number;
 }
 
+/**
+ * Represents a horizontal alignment.
+ */
 export type HorzAlign = 'left' | 'center' | 'right';
+/**
+ * Represents a vertical alignment.
+ */
 export type VertAlign = 'top' | 'center' | 'bottom';
 
 export interface WatermarkRendererData {
@@ -21,18 +27,18 @@ export interface WatermarkRendererData {
 	vertAlign: VertAlign;
 }
 
-export class WatermarkRenderer implements IPaneRenderer {
+export class WatermarkRenderer extends ScaledRenderer {
 	private readonly _data: WatermarkRendererData;
 	private _metricsCache: Map<string, Map<string, number>> = new Map();
 
 	public constructor(data: WatermarkRendererData) {
+		super();
 		this._data = data;
 	}
 
-	public draw(ctx: CanvasRenderingContext2D): void {
-	}
+	protected _drawImpl(ctx: CanvasRenderingContext2D): void {}
 
-	public drawBackground(ctx: CanvasRenderingContext2D): void {
+	protected override _drawBackgroundImpl(ctx: CanvasRenderingContext2D): void {
 		if (!this._data.visible) {
 			return;
 		}

@@ -16,7 +16,8 @@
         </script>
 
         <script type="text/javascript">
-            runTestCase(document.getElementById('container'));
+            window.BUILD_MODE = '{BUILD_MODE}';
+            window.testCaseReady = Promise.resolve(runTestCase(document.getElementById('container')));
         </script>
     </body>
 </html>

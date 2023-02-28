@@ -10,8 +10,9 @@ export interface TimeAxisViewRendererOptions {
 	tickLength: number;
 	paddingHorizontal: number;
 	widthCache: TextWidthCache;
+	labelBottomOffset: number;
 }
 
 export interface ITimeAxisViewRenderer {
-	draw(ctx: CanvasRenderingContext2D, rendererOptions: TimeAxisViewRendererOptions): void;
+	draw(ctx: CanvasRenderingContext2D, rendererOptions: TimeAxisViewRendererOptions, pixelRatio: number): void;
 }

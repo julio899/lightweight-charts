@@ -33,14 +33,17 @@ export abstract class SeriesHorizontalLinePaneView implements IPaneView {
 		this._invalidated = true;
 	}
 
-	public renderer(): IPaneRenderer {
-		if (this._invalidated) {
-			this._updateImpl();
-			this._invalidated = false;
+	public renderer(height: number, width: number): IPaneRenderer | null {
+		if (!this._series.visible()) {
+			return null;
 		}
 
+		if (this._invalidated) {
+			this._updateImpl(height, width);
+			this._invalidated = false;
+		}
 		return this._lineRenderer;
 	}
 
-	protected abstract _updateImpl(): void;
+	protected abstract _updateImpl(height: number, width: number): void;
 }

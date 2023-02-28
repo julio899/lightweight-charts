@@ -38,11 +38,21 @@ export function min(arr: number[]): number {
 	}
 
 	let minVal = arr[0];
-	for (let i = 0; i < arr.length; ++i) {
+	for (let i = 1; i < arr.length; ++i) {
 		if (arr[i] < minVal) {
 			minVal = arr[i];
 		}
 	}
 
 	return minVal;
+}
+
+export function ceiledEven(x: number): number {
+	const ceiled = Math.ceil(x);
+	return (ceiled % 2 !== 0) ? ceiled - 1 : ceiled;
+}
+
+export function ceiledOdd(x: number): number {
+	const ceiled = Math.ceil(x);
+	return (ceiled % 2 === 0) ? ceiled - 1 : ceiled;
 }

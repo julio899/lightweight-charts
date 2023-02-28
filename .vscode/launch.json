@@ -31,6 +31,26 @@
                 "${input:testStandalonePath}"
             ],
             "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Coverage tests",
+            "program": "${workspaceFolder}/tests/e2e/coverage/runner.js",
+            "args": [
+                "${input:testStandalonePath}"
+            ],
+            "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Interaction tests",
+            "program": "${workspaceFolder}/tests/e2e/interactions/runner.js",
+            "args": [
+                "${input:testStandalonePath}"
+            ],
+            "internalConsoleOptions": "openOnSessionStart"
         }
     ],
     "inputs": [

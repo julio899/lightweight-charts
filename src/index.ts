@@ -1,21 +1,25 @@
 /// <reference types="_build-time-constants" />
 
-export { LineStyle, LineType, LineWidth } from './renderers/draw-line';
+export { LineStyle, LineType } from './renderers/draw-line';
 
-export { BarPrice } from './model/bar';
-export { CrossHairMode } from './model/cross-hair';
+export { TrackingModeExitMode } from './model/chart-model';
+export { CrosshairMode } from './model/crosshair';
+export { MismatchDirection } from './model/plot-list';
 export { PriceScaleMode } from './model/price-scale';
-export { UTCTimestamp } from './model/time-data';
+export { PriceLineSource, LastPriceAnimationMode } from './model/series-options';
+export { TickMarkType } from './model/time-scale';
+export { ColorType } from './model/layout-options';
 
-export { BarData } from './api/ibar-series-api-base';
-export { IChartApi, MouseEventParams } from './api/ichart-api';
-export { HistogramData } from './api/ihistogram-series-api';
-export { LineData } from './api/iline-series-api-base';
-export { ISeriesApi } from './api/iseries-api';
+export {
+	isBusinessDay,
+	isUTCTimestamp,
+} from './api/data-consumer';
 
-export { isBusinessDay, isUTCTimestamp } from './api/data-layer';
 export { createChart } from './api/create-chart';
 
+/**
+ * Returns the current version as a string. For example `'3.3.0'`.
+ */
 export function version(): string {
 	return process.env.BUILD_VERSION;
 }

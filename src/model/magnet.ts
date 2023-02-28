@@ -1,35 +1,29 @@
 import { ensure } from '../helpers/assertions';
 
 import { Coordinate } from './coordinate';
-import { CrossHairMode, CrossHairOptions } from './cross-hair';
-import { IDataSource } from './idata-source';
+import { CrosshairMode, CrosshairOptions } from './crosshair';
+import { IPriceDataSource } from './iprice-data-source';
 import { Pane } from './pane';
+import { PlotRowValueIndex } from './plot-data';
 import { Series } from './series';
-import { SeriesPlotIndex } from './series-data';
 import { TimePointIndex } from './time-data';
 
 export class Magnet {
-	private readonly _options: CrossHairOptions;
+	private readonly _options: CrosshairOptions;
 
-	public constructor(options: CrossHairOptions) {
+	public constructor(options: CrosshairOptions) {
 		this._options = options;
 	}
 
 	public align(price: number, index: TimePointIndex, pane: Pane): number {
 		let res = price;
-		if (this._options.mode === CrossHairMode.Normal) {
+		if (this._options.mode === CrosshairMode.Normal) {
 			return res;
 		}
 
 		const defaultPriceScale = pane.defaultPriceScale();
-		// get the main source
-		const mainSource = defaultPriceScale.mainSource();
+		const firstValue = defaultPriceScale.firstValue();
 
-		if (defaultPriceScale.isEmpty() || mainSource === null) {
-			return res;
-		}
-
-		const firstValue = mainSource.firstValue();
 		if (firstValue === null) {
 			return res;
 		}
@@ -37,12 +31,12 @@ export class Magnet {
 		const y = defaultPriceScale.priceToCoordinate(price, firstValue);
 
 		// get all serieses from the pane
-		const serieses: ReadonlyArray<Series> = pane.dataSources().filter(
-			((ds: IDataSource) => (ds instanceof Series)) as (ds: IDataSource) => ds is Series);
+		const serieses: readonly Series[] = pane.dataSources().filter(
+			((ds: IPriceDataSource) => (ds instanceof Series)) as (ds: IPriceDataSource) => ds is Series);
 
 		const candidates = serieses.reduce(
 			(acc: Coordinate[], series: Series) => {
-				if (pane.isOverlay(series)) {
+				if (pane.isOverlay(series) || !series.visible()) {
 					return acc;
 				}
 				const ps = series.priceScale();
@@ -55,13 +49,10 @@ export class Magnet {
 				if (bar === null) {
 					return acc;
 				}
-				const prices = [
-					bar.value[SeriesPlotIndex.Close] as number,
-				];
 
 				// convert bar to pixels
 				const firstPrice = ensure(series.firstValue());
-				return acc.concat(prices.map((barPrice: number) => ps.priceToCoordinate(barPrice, firstPrice, true)));
+				return acc.concat([ps.priceToCoordinate(bar.value[PlotRowValueIndex.Close], firstPrice.value)]);
 			},
 			[] as Coordinate[]);
 
