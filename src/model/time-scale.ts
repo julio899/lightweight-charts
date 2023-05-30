@@ -83,6 +83,8 @@ export const enum TickMarkType {
  * Note that the returned string should be the shortest possible value and should have no more than 8 characters.
  * Otherwise, the tick marks will overlap each other.
  *
+ * If the formatter function returns `null` then the default tick mark formatter will be used as a fallback.
+ *
  * @example
  * ```js
  * const customFormatter = (time, tickMarkType, locale) => {
@@ -90,7 +92,7 @@ export const enum TickMarkType {
  * };
  * ```
  */
-export type TickMarkFormatter = (time: Time, tickMarkType: TickMarkType, locale: string) => string;
+export type TickMarkFormatter = (time: Time, tickMarkType: TickMarkType, locale: string) => string | null;
 
 /**
  * Options for the time scale; the horizontal scale at the bottom of the chart that displays the time of data.
@@ -317,6 +319,10 @@ export class TimeScale {
 
 	public isEmpty(): boolean {
 		return this._width === 0 || this._points.length === 0 || this._baseIndexOrNull === null;
+	}
+
+	public hasPoints(): boolean {
+		return this._points.length > 0;
 	}
 
 	// strict range: integer indices of the bars in the visible range rounded in more wide direction
@@ -905,7 +911,14 @@ export class TimeScale {
 		const tickMarkType = weightToTickMarkType(tickMark.weight, this._options.timeVisible, this._options.secondsVisible);
 
 		if (this._options.tickMarkFormatter !== undefined) {
-			return this._options.tickMarkFormatter(tickMark.originalTime as unknown as Time, tickMarkType, this._localizationOptions.locale);
+			const tickMarkString = this._options.tickMarkFormatter(
+				tickMark.originalTime as unknown as Time,
+				tickMarkType,
+				this._localizationOptions.locale
+			);
+			if (tickMarkString !== null) {
+				return tickMarkString;
+			}
 		}
 
 		return defaultTickMarkFormatter(tickMark.time, tickMarkType, this._localizationOptions.locale);

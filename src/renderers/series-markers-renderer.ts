@@ -1,3 +1,5 @@
+import { MediaCoordinatesRenderingScope } from 'fancy-canvas';
+
 import { ensureNever } from '../helpers/assertions';
 import { makeFont } from '../helpers/make-font';
 
@@ -7,7 +9,7 @@ import { SeriesMarkerShape } from '../model/series-markers';
 import { TextWidthCache } from '../model/text-width-cache';
 import { SeriesItemsIndexesRange, TimedValue } from '../model/time-data';
 
-import { ScaledRenderer } from './scaled-renderer';
+import { MediaCoordinatesPaneRenderer } from './media-coordinates-pane-renderer';
 import { drawArrow, hitTestArrow } from './series-markers-arrow';
 import { drawCircle, hitTestCircle } from './series-markers-circle';
 import { drawSquare, hitTestSquare } from './series-markers-square';
@@ -15,6 +17,7 @@ import { drawText, hitTestText } from './series-markers-text';
 
 export interface SeriesMarkerText {
 	content: string;
+	x: Coordinate;
 	y: Coordinate;
 	width: number;
 	height: number;
@@ -35,7 +38,7 @@ export interface SeriesMarkerRendererData {
 	visibleRange: SeriesItemsIndexesRange | null;
 }
 
-export class SeriesMarkersRenderer extends ScaledRenderer {
+export class SeriesMarkersRenderer extends MediaCoordinatesPaneRenderer {
 	private _data: SeriesMarkerRendererData | null = null;
 	private _textWidthCache: TextWidthCache = new TextWidthCache();
 	private _fontSize: number = -1;
@@ -73,7 +76,7 @@ export class SeriesMarkersRenderer extends ScaledRenderer {
 		return null;
 	}
 
-	protected _drawImpl(ctx: CanvasRenderingContext2D, isHovered: boolean, hitTestData?: unknown): void {
+	protected _drawImpl({ context: ctx }: MediaCoordinatesRenderingScope, isHovered: boolean, hitTestData?: unknown): void {
 		if (this._data === null || this._data.visibleRange === null) {
 			return;
 		}
@@ -86,6 +89,7 @@ export class SeriesMarkersRenderer extends ScaledRenderer {
 			if (item.text !== undefined) {
 				item.text.width = this._textWidthCache.measureText(ctx, item.text.content);
 				item.text.height = this._fontSize;
+				item.text.x = item.x - item.text.width / 2 as Coordinate;
 			}
 			drawItem(item, ctx);
 		}
@@ -96,7 +100,7 @@ function drawItem(item: SeriesMarkerRendererDataItem, ctx: CanvasRenderingContex
 	ctx.fillStyle = item.color;
 
 	if (item.text !== undefined) {
-		drawText(ctx, item.text.content, item.x - item.text.width / 2, item.text.y);
+		drawText(ctx, item.text.content, item.text.x, item.text.y);
 	}
 
 	drawShape(item, ctx);
@@ -126,7 +130,7 @@ function drawShape(item: SeriesMarkerRendererDataItem, ctx: CanvasRenderingConte
 }
 
 function hitTestItem(item: SeriesMarkerRendererDataItem, x: Coordinate, y: Coordinate): boolean {
-	if (item.text !== undefined && hitTestText(item.x, item.text.y, item.text.width, item.text.height, x, y)) {
+	if (item.text !== undefined && hitTestText(item.text.x, item.text.y, item.text.width, item.text.height, x, y)) {
 		return true;
 	}
 

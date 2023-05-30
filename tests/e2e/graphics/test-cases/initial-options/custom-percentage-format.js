@@ -13,18 +13,16 @@ function generateData() {
 }
 
 function runTestCase(container) {
-	const chart = window.chart = LightweightCharts.createChart(container, {
-		crosshair: {
-			vertLine: {
-				labelBackgroundColor: '#ffffff',
-			},
-			horzLine: {
-				labelBackgroundColor: '#000000',
-			},
+	const chart = (window.chart = LightweightCharts.createChart(container, {
+		localization: {
+			percentageFormatter: p => `%${p.toFixed(3)}`,
 		},
-	});
+	}));
 
-	const mainSeries = chart.addAreaSeries();
+	const mainSeries = chart.addLineSeries();
+	mainSeries.priceScale().applyOptions({
+		mode: LightweightCharts.PriceScaleMode.Percentage,
+	});
 
 	mainSeries.setData(generateData());
 }

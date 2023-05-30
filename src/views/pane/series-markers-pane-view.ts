@@ -113,7 +113,7 @@ export class SeriesMarkersPaneView implements IUpdatablePaneView {
 		}
 	}
 
-	public renderer(height: number, width: number, addAnchors?: boolean): IPaneRenderer | null {
+	public renderer(addAnchors?: boolean): IPaneRenderer | null {
 		if (!this._series.visible()) {
 			return null;
 		}
@@ -204,6 +204,7 @@ export class SeriesMarkersPaneView implements IUpdatablePaneView {
 			if (marker.text !== undefined && marker.text.length > 0) {
 				rendererItem.text = {
 					content: marker.text,
+					x: 0 as Coordinate,
 					y: 0 as Coordinate,
 					width: 0,
 					height: 0,

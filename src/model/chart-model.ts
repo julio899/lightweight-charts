@@ -21,6 +21,7 @@ import { ColorType, LayoutOptions } from './layout-options';
 import { LocalizationOptions } from './localization-options';
 import { Magnet } from './magnet';
 import { DEFAULT_STRETCH_FACTOR, Pane } from './pane';
+import { Point } from './point';
 import { PriceScale, PriceScaleOptions } from './price-scale';
 import { Series, SeriesOptionsInternal } from './series';
 import { SeriesOptionsMap, SeriesType } from './series-options';
@@ -246,6 +247,24 @@ export interface ChartOptions {
 	 * @defaultValue If `0` (default) or none value provided, then a size of the widget will be calculated based its container's size.
 	 */
 	height: number;
+
+	/**
+	 * Setting this flag to `true` will make the chart watch the chart container's size and automatically resize the chart to fit its container whenever the size changes.
+	 *
+	 * This feature requires [`ResizeObserver`](https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserver) class to be available in the global scope.
+	 * Note that calling code is responsible for providing a polyfill if required. If the global scope does not have `ResizeObserver`, a warning will appear and the flag will be ignored.
+	 *
+	 * Please pay attention that `autoSize` option and explicit sizes options `width` and `height` don't conflict with one another.
+	 * If you specify `autoSize` flag, then `width` and `height` options will be ignored unless `ResizeObserver` has failed. If it fails then the values will be used as fallback.
+	 *
+	 * The flag `autoSize` could also be set with and unset with `applyOptions` function.
+	 * ```js
+	 * const chart = LightweightCharts.createChart(document.body, {
+	 *     autoSize: true,
+	 * });
+	 * ```
+	 */
+	autoSize: boolean;
 
 	/**
 	 * Watermark options.
@@ -496,7 +515,7 @@ export class ChartModel implements IDestroyable {
 		return this._crosshair;
 	}
 
-	public crosshairMoved(): ISubscription<TimePointIndex | null, TouchMouseEventData | null> {
+	public crosshairMoved(): ISubscription<TimePointIndex | null, Point | null, TouchMouseEventData | null> {
 		return this._crosshairMoved;
 	}
 
@@ -664,14 +683,14 @@ export class ChartModel implements IDestroyable {
 		this._crosshair.setPosition(index, price, pane);
 
 		this.cursorUpdate();
-		this._crosshairMoved.fire(this._crosshair.appliedIndex(), event);
+		this._crosshairMoved.fire(this._crosshair.appliedIndex(), { x, y }, event);
 	}
 
 	public clearCurrentPosition(): void {
 		const crosshair = this.crosshairSource();
 		crosshair.clearPosition();
 		this.cursorUpdate();
-		this._crosshairMoved.fire(null, null);
+		this._crosshairMoved.fire(null, null, null);
 	}
 
 	public updateCrosshair(): void {
@@ -740,6 +759,7 @@ export class ChartModel implements IDestroyable {
 
 		// to avoid memleaks
 		this._options.localization.priceFormatter = undefined;
+		this._options.localization.percentageFormatter = undefined;
 		this._options.localization.timeFormatter = undefined;
 	}
 
